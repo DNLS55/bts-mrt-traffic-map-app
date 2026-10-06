@@ -303,7 +303,7 @@ function renderLive(live, stationId, destinationId, needMin) {
   return `<ul class="etas">${trains.map((t) => {
     const sec = Math.max(0, Math.round((t.etaAt - now) / 1000));
     return `<li class="${stale ? "is-stale" : ""}"><span class="eta">${sec < 45 ? "Now" : `${Math.round(sec / 60)} min`}</span>
-      <small class="muted">${t.destination !== destinationId ? `to ${esc(model.stations.get(t.destination)?.name)} · ` : ""}${t.train ? `train ${esc(t.train)}` : ""}</small>${catchTag(sec, needMin)}</li>`;
+      <span class="eta-meta">${t.destination !== destinationId ? `to ${esc(model.stations.get(t.destination)?.name)} · ` : ""}${t.train ? `train ${esc(t.train)}` : ""}</span>${catchTag(sec, needMin)}</li>`;
   }).join("")}</ul>
     <div class="src">${stale ? `<span class="tag stale">STALE</span>` : `<span class="tag live">LIVE</span>`} ${esc(live.data.source)}</div>`;
 }
@@ -315,7 +315,7 @@ function renderScheduled(lineId, stationId, nextId, needMin) {
   return `<ul class="etas">${trains.map((t) => {
     const sec = Math.max(0, Math.round((t.etaAt - now) / 1000));
     return `<li class="sched"><span class="eta">${sec < 45 ? "Due" : `${Math.round(sec / 60)} min`}</span>
-      <small class="muted">${fmtTime(t.etaAt).slice(0, 5)}</small>${catchTag(sec, needMin)}</li>`;
+      <span class="eta-meta">${fmtTime(t.etaAt).slice(0, 5)}</span>${catchTag(sec, needMin)}</li>`;
   }).join("")}</ul>
     <div class="src"><span class="tag ttag">SCHEDULED</span> assumes trains run on time</div>`;
 }

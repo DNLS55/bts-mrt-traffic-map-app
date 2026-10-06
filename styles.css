@@ -174,7 +174,9 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .dir { border-radius: 10px; background: var(--bg); padding: 8px 10px; min-width: 0; }
 .dir-h { font-weight: 600; font-size: 14px; }
 .etas { list-style: none; padding: 0; margin: 6px 0 4px; }
-.etas li { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 2px 0; }
+.etas li { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 2px; padding: 3px 0; }
+.eta-meta { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--muted); }
+.etas .catch { flex: 0 0 auto; margin-left: auto; }
 .etas li.is-stale { opacity: 0.55; }
 .eta { white-space: nowrap; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .catch { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
@@ -243,3 +245,8 @@ hr.thin { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
 .note.install img { border-radius: 9px; flex: 0 0 auto; }
 .note.install span { flex: 1; min-width: 0; }
 .install-steps { margin: 4px 0 6px; padding-left: 20px; font-size: 14px; display: grid; gap: 4px; }
+
+/* Narrow phones: one direction per row so countdown rows have room. */
+@media (max-width: 480px) {
+  .dirs { grid-template-columns: 1fr; }
+}

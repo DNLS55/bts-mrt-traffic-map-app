@@ -1,6 +1,6 @@
 // Offline app shell. tools/build-site.mjs replaces VERSION with a content
 // hash on deploy; tests check SHELL lists every app file.
-const VERSION = "3999fbad8c7d";
+const VERSION = "20ca5be97f70";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/main.js", "js/model.js", "js/geo.js", "js/map.js", "js/feeds.js", "js/schedule.js", "js/coverage.js", "js/route.js", "js/live.js", "js/scheduled.js", "js/unofficial.js",

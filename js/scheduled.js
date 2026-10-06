@@ -117,21 +117,41 @@ export function scheduledArrivals(model, lineId, stationId, nextId, now = Date.n
 }
 
 // Where every scheduled train would be right now if all ran on time.
-export function scheduledPositions(model, lineIds, now = Date.now()) {
+// `shift(lineId, towardsId)` may return minutes to move a pattern later
+// (positive = running late), used to line the timetable up with live data;
+// `skip(trip, etaAt)` may drop trips already shown from live data.
+export function scheduledPositions(model, lineIds, now = Date.now(), { shift = () => 0, skip = () => false } = {}) {
   const out = [];
   for (const lineId of lineIds) {
     for (const trip of tripsFor(model, lineId, now)) {
-      const elapsed = (now - trip.dep) / 60000;
+      const towards = trip.stops[trip.stops.length - 1];
+      const late = shift(lineId, towards) || 0;
+      const elapsed = (now - trip.dep) / 60000 - late;
       const total = trip.cum[trip.cum.length - 1];
       if (elapsed < 0 || elapsed > total) continue;
+      if (skip(trip, late)) continue;
       let k = 0;
       while (k < trip.segs.length - 1 && trip.cum[k + 1] <= elapsed) k++;
       const seg = trip.segs[k];
-      const ride = Math.max(seg.minutes - 0.5, 0.1); // last 0.5 min of each segment is the dwell
-      const f = (elapsed - trip.cum[k]) / ride;
-      const p = pointAndAhead(seg.pts, Math.min(f, 1));
-      out.push({ ...p, lineId, kind: "scheduled", dwell: f >= 1, id: `s|${lineId}|${trip.stops[0]}|${trip.dep}` });
+      // Each segment: run (accelerate, cruise, brake), then the dwell at the next station.
+      const t = elapsed - trip.cum[k];
+      const dwell = t >= seg.runMinutes;
+      const p = pointAndAhead(seg.pts, dwell ? 1 : seg.fractionAt(t));
+      out.push({ ...p, lineId, kind: late ? "live-sched" : "scheduled", dwell, id: `s|${lineId}|${trip.stops[0]}|${trip.dep}` });
     }
   }
   return out;
+}
+
+// Timetable arrival times at a station leaving towards `nextId`, between two instants.
+export function scheduledEtasAt(model, lineId, stationId, nextId, fromMs, toMs) {
+  const out = [];
+  for (const trip of tripsFor(model, lineId, fromMs)) {
+    for (let i = 0; i < trip.stops.length - 1; i++) {
+      if (trip.stops[i] !== stationId || trip.stops[i + 1] !== nextId) continue;
+      const at = trip.dep + trip.cum[i] * 60000;
+      if (at >= fromMs && at <= toMs) out.push(at);
+    }
+  }
+  return out.sort((a, b) => a - b);
 }

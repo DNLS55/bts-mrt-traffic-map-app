@@ -5,8 +5,47 @@
 import { distanceM } from "./geo.js";
 import { towardsFor } from "./model.js";
 
-const RIDE_M_PER_MIN = 600; // ~36 km/h average between stations
-const DWELL_MIN = 0.5;
+// Train motion between stations: accelerate, cruise at the line's top speed,
+// brake into the next station, then stand for the dwell time.
+const ACCEL = 0.9; // m/s²
+const BRAKE = 0.9; // m/s²
+const TOP_SPEED = { // m/s
+  "BTS-SUK": 22, "BTS-SIL": 22, "BTS-GLD": 13.9, "MRT-BL": 22, "MRT-PP": 22, "MRT-PK": 22, "MRT-PKB": 22,
+  "MRT-YL": 22, ARL: 44, "SRT-DR": 33, "SRT-LR": 33,
+};
+export const DWELL_MIN = 0.5;
+
+// Run between two stations of length `meters`: total seconds and distance
+// covered after t seconds (trapezoid, or triangle when stations are close).
+export function runProfile(lineId, meters) {
+  const v = TOP_SPEED[lineId] || 22;
+  const dAcc = (v * v) / (2 * ACCEL);
+  const dBrk = (v * v) / (2 * BRAKE);
+  let peak = v;
+  let tAcc;
+  let tCruise;
+  let tBrk;
+  if (meters >= dAcc + dBrk) {
+    tAcc = v / ACCEL;
+    tBrk = v / BRAKE;
+    tCruise = (meters - dAcc - dBrk) / v;
+  } else {
+    peak = Math.sqrt((2 * ACCEL * BRAKE * meters) / (ACCEL + BRAKE));
+    tAcc = peak / ACCEL;
+    tBrk = peak / BRAKE;
+    tCruise = 0;
+  }
+  const seconds = tAcc + tCruise + tBrk;
+  const at = (t) => {
+    if (t <= 0) return 0;
+    if (t < tAcc) return 0.5 * ACCEL * t * t;
+    const s1 = 0.5 * ACCEL * tAcc * tAcc;
+    if (t < tAcc + tCruise) return s1 + peak * (t - tAcc);
+    const tb = Math.min(t - tAcc - tCruise, tBrk);
+    return Math.min(meters, s1 + peak * tCruise + peak * tb - 0.5 * BRAKE * tb * tb);
+  };
+  return { seconds, at };
+}
 
 const node = (stationId, lineId) => `${stationId}@${lineId}`;
 
@@ -22,7 +61,7 @@ export function buildGraph(model) {
       const sb = model.stations.get(b);
       const geom = line.geometry?.[`${a}|${b}`] || line.geometry?.[`${b}|${a}`];
       const meters = geom ? pathLength(geom) : distanceM(sa, sb) * 1.15;
-      const minutes = meters / RIDE_M_PER_MIN + DWELL_MIN;
+      const minutes = runProfile(line.id, meters).seconds / 60 + DWELL_MIN;
       add(node(a, line.id), node(b, line.id), { kind: "ride", line: line.id, minutes });
       add(node(b, line.id), node(a, line.id), { kind: "ride", line: line.id, minutes });
     }
@@ -54,7 +93,14 @@ export function segment(model, lineId, a, b) {
     const sb = model.stations.get(b);
     pts = [[sa.lat, sa.lon], [sb.lat, sb.lon]];
   }
-  return { pts, minutes: pathLength(pts) / RIDE_M_PER_MIN + DWELL_MIN };
+  const meters = pathLength(pts);
+  const run = runProfile(lineId, meters);
+  const runMinutes = run.seconds / 60;
+  return {
+    pts, meters, runMinutes, minutes: runMinutes + DWELL_MIN,
+    // Fraction of the distance covered `m` minutes after leaving station a.
+    fractionAt: (m) => (meters ? run.at(m * 60) / meters : 1),
+  };
 }
 
 // Point a fraction f (0..1) of the way along a polyline.

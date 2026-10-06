@@ -30,12 +30,13 @@ export const PLACE_COLORS = {
   landmark: "#4a5568", wellness: "#c06c84",
 };
 
-export function createMap(container, model, { onStationTap, places = [], onPlaceTap = () => {} }) {
+export function createMap(container, model, { onStationTap, places = [], onPlaceTap = () => {}, icons = {}, roads = [] }) {
   const net = model.network;
   const svg = el("svg", { class: "net-map", role: "img", "aria-label": "Map of BTS, MRT, Airport Rail Link and SRT Red Line stations" });
   container.appendChild(svg);
   const root = el("g", {}, svg);
   const landG = el("g", { class: "land" }, root);
+  const roadsG = el("g", { class: "roads" }, root);
   const placeShapesG = el("g", { class: "place-shapes" }, root);
   const linesG = el("g", { class: "lines" }, root);
   const xferG = el("g", { class: "xfers" }, root);
@@ -128,6 +129,25 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
     landLabels.push(l);
   }
 
+  // ---- major roads (OpenStreetMap): drawn under the rail lines, labelled when zoomed in ----
+  const roadLabels = [];
+  for (const road of roads) {
+    if (!road.lines.length) continue;
+    const d = road.lines.map((l) => pathD(l)).join("");
+    el("path", { d, class: "road-casing" }, roadsG);
+    el("path", { d, class: "road" }, roadsG);
+    // Label at the vertex closest to the road's centre of mass.
+    const all = road.lines.flat();
+    const c = all.reduce((a, q) => [a[0] + q[0] / all.length, a[1] + q[1] / all.length], [0, 0]);
+    const mid = all.reduce((best, q) => ((q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 < (best[0] - c[0]) ** 2 + (best[1] - c[1]) ** 2 ? q : best));
+    const l = el("text", { class: "road-lbl" }, labelsG);
+    l.textContent = road.name;
+    l._p = project(mid[0], mid[1]);
+    l._prio = 3.3;
+    l._minZoom = 5;
+    roadLabels.push(l);
+  }
+
   // ---- top-100 places: outlines for areas, highlighted streets, emoji badges ----
   const landmarkOsm = new Set((net.landmarks?.parks || []).map((p) => p.osm));
   const badges = []; // { g, _p, rank, id }
@@ -139,21 +159,30 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
     for (const line of pl.lines || []) el("path", { d: pathD(line), class: "place-street", style: `--pc:${color}` }, placeShapesG);
     const spots = pl.spots || [{ lat: pl.lat, lon: pl.lon, label: null }];
     for (const [i, spot] of spots.entries()) {
-      const g = el("g", { class: "place", tabindex: "0", role: "button", "aria-label": `${pl.rank}. ${pl.name}${spot.label ? `: ${spot.label}` : ""}`, style: `--pc:${color}` }, placesG);
+      const tagText = pl.id;
+      const g = el("g", { class: "place", tabindex: "0", role: "button", "aria-label": `${pl.id}. ${pl.name}${spot.label ? `: ${spot.label}` : ""}`, style: `--pc:${color}` }, placesG);
       el("circle", { r: 13, class: "pl-bg" }, g);
-      el("text", { y: 5.2, class: "pl-emoji", "text-anchor": "middle" }, g).textContent = pl.emoji;
+      const icon = icons[pl.id] || icons[pl.icon];
+      if (icon) {
+        // Custom illustration (32×32) scaled into the badge.
+        const art = el("g", { class: "pl-art", transform: "translate(-11 -11) scale(0.6875)" }, g);
+        art.innerHTML = icon;
+      } else {
+        el("text", { y: 5.2, class: "pl-emoji", "text-anchor": "middle" }, g).textContent = pl.emoji;
+      }
       const tag = el("g", { class: "pl-rank", transform: "translate(10 -10)" }, g);
-      el("circle", { r: pl.rank >= 100 ? 7.5 : 6.5 }, tag);
-      el("text", { y: 2.6, "text-anchor": "middle" }, tag).textContent = String(pl.rank);
-      const tap = () => onPlaceTap(pl.rank);
+      const tw = Math.max(13, 5 + tagText.length * 4.6);
+      el("rect", { x: -tw / 2, y: -6.5, width: tw, height: 13, rx: 6.5 }, tag);
+      el("text", { y: 2.6, "text-anchor": "middle" }, tag).textContent = tagText;
+      const tap = () => onPlaceTap(pl.id);
       g.addEventListener("click", tap);
       g.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && tap());
-      badges.push({ g, _p: project(spot.lat, spot.lon), rank: pl.rank, id: `${pl.rank}|${i}` });
+      badges.push({ g, _p: project(spot.lat, spot.lon), rank: pl.rank, place: pl.id, pinned: Boolean(pl.pinned), id: `${pl.id}|${i}` });
     }
   }
   let selectedPlace = null;
 
-  const pts = net.stations.filter((s) => s.lat != null).map((s) => project(s.lat, s.lon));
+  const pts = [...net.stations.filter((s) => s.lat != null), ...places].map((s) => project(s.lat, s.lon));
   const bounds = {
     minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)),
     minY: Math.min(...pts.map((p) => p.y)), maxY: Math.max(...pts.map((p) => p.y)),
@@ -189,9 +218,10 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
       })),
       ...xferLabels.map((label) => ({ label, prio: label._ends.some((id) => highlighted.has(id)) && view.s > 3 ? 0.2 : view.s > 5 ? 1 : 9 })),
       ...landLabels.map((label) => ({ label, prio: view.s >= (label._minZoom || 0) ? label._prio : 9 })),
+      ...roadLabels.map((label) => ({ label, prio: view.s >= label._minZoom ? label._prio : 9 })),
       ...badges.map((b) => ({
         label: b, badge: true,
-        prio: b.rank === selectedPlace ? 0 : b.rank <= 10 ? 0.4 : b.rank <= 30 ? 1.6 : b.rank <= 60 ? 2.6 : 3.6,
+        prio: b.place === selectedPlace ? 0 : b.rank <= 10 || b.pinned ? 0.4 : b.rank <= 30 ? 1.6 : 2.6,
       })),
     ].sort((a, b) => a.prio - b.prio);
     const maxPrio = view.s > 14 ? 4 : view.s > 6 ? 3 : view.s > 3 ? 2 : 0.5;
@@ -204,7 +234,7 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
         label.g.style.display = show ? "" : "none";
         if (show) {
           label.g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
-          label.g.classList.toggle("sel", label.rank === selectedPlace);
+          label.g.classList.toggle("sel", label.place === selectedPlace);
           boxes.push(b);
         }
         continue;
@@ -399,8 +429,8 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
     }
   }
 
-  function selectPlace(rank) {
-    selectedPlace = rank;
+  function selectPlace(id) {
+    selectedPlace = id;
     apply();
   }
 

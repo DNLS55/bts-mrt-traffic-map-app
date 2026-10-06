@@ -11,7 +11,7 @@
 // Checked 2026-10-06: Sukhumvit, Silom, Yellow, Pink (incl. Muang Thong Thani
 // branch) return countdowns with train numbers; Gold returns "line unavailable".
 
-import { segment, pointAndAhead } from "./route.js";
+import { segment, pointAndAhead, DWELL_MIN } from "./route.js";
 
 export const UNOFFICIAL = {
   id: "bangkoktransit",
@@ -92,15 +92,21 @@ export function createUnofficialSource(model, currentStation) {
   };
 }
 
-// Where an approaching train probably is now: walk back up the line from the
-// station by its remaining minutes, using track length and average speed.
+// Where an approaching train probably is now. Work back from its live arrival
+// time: it is either running on the segment into the station (accelerate,
+// cruise, brake), standing at the previous platform, or further back.
 export function estimatePosition(model, arrival, now = Date.now()) {
   const line = model.lines.get(arrival.line);
   const ids = line.stations;
   let idx = ids.indexOf(arrival.station);
   const sign = ids.indexOf(arrival.towards) > idx ? 1 : -1;
   let remaining = (arrival.etaAt - now) / 60000;
-  if (idx < 0 || remaining < 0) return null;
+  if (idx < 0 || remaining < -0.5) return null;
+  if (remaining <= 0) { // arriving / at the platform now
+    const prev = ids[idx - sign];
+    const seg = prev ? segment(model, arrival.line, prev, ids[idx]) : null;
+    return seg ? { ...pointAndAhead(seg.pts, 1), dwell: true } : null;
+  }
   let cur = ids[idx];
   for (;;) {
     const prev = ids[idx - sign];
@@ -109,10 +115,15 @@ export function estimatePosition(model, arrival, now = Date.now()) {
       return { lat: s.lat, lon: s.lon, atTerminus: true };
     }
     const seg = segment(model, arrival.line, prev, cur);
-    // Within the last ~25 s the train is pulling in / standing at the platform.
-    if (remaining <= 0.4 && cur === arrival.station) return { ...pointAndAhead(seg.pts, 1), dwell: true };
-    if (remaining <= seg.minutes) return pointAndAhead(seg.pts, 1 - remaining / seg.minutes);
-    remaining -= seg.minutes;
+    if (remaining <= seg.runMinutes) {
+      return pointAndAhead(seg.pts, seg.fractionAt(seg.runMinutes - remaining));
+    }
+    remaining -= seg.runMinutes;
+    if (remaining <= DWELL_MIN) {
+      // Standing at the previous station, doors open.
+      return { ...pointAndAhead(seg.pts, 0), dwell: true };
+    }
+    remaining -= DWELL_MIN;
     cur = prev;
     idx -= sign;
   }

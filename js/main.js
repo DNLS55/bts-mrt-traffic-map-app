@@ -1,5 +1,7 @@
 import { NETWORK } from "../data/network.js";
 import { PLACES } from "../data/places.js";
+import { ROADS } from "../data/roads.js";
+import { PLACE_ICONS } from "../icons/places/index.js";
 import { buildModel, directionsAt } from "./model.js";
 import { nearestStations, walkMinutes, distanceM, formatDistance, WALK } from "./geo.js";
 import { createMap, PLACE_COLORS } from "./map.js";
@@ -7,7 +9,7 @@ import { STALE_AFTER_MS, createDemoFeed, timetableFor, formatHeadway } from "./f
 import { COVERAGE, LIVE_REASON } from "./coverage.js";
 import { sourcesFor, startPolling, isStale, nextTrains } from "./live.js";
 import { createUnofficialSource, estimatePosition, UNOFFICIAL } from "./unofficial.js";
-import { scheduledArrivals, scheduledPositions } from "./scheduled.js";
+import { scheduledArrivals, scheduledPositions, scheduledEtasAt } from "./scheduled.js";
 import { buildGraph, planRoute } from "./route.js";
 
 const model = buildModel(NETWORK);
@@ -36,15 +38,17 @@ const state = {
   feed: null, // demo only: {updatedAt, fetchedAt, etas: Map(directionKey -> seconds[]), positions}
   live: new Map(), // lineId -> poll state of the live source covering it
   unofficial: store.get("unofficial", true), // bangkoktransit.com feed: on unless switched off
-  scheduled: store.get("scheduled", true), // timetable-based estimates for lines without live data
+  scheduled: true, // timetable estimates are always on where there's no live data
 };
 const HOSTED_URL = "https://dnls55.github.io/bts-mrt-traffic-map-app/";
 const COPYRIGHT_HTML = `<p class="copyright">© 2026 Professor Daniel Schlagwein. All rights reserved. No responsibility taken; for demonstration purposes only.</p>`;
 const embedded = (() => { try { return window.top !== window.self; } catch { return true; } })();
 
 const demoFeed = createDemoFeed(model);
-const placeByRank = new Map(PLACES.places.map((p) => [p.rank, p]));
-const map = createMap($("#map"), model, { onStationTap: openStation, places: PLACES.places, onPlaceTap: openPlace });
+const placeById = new Map(PLACES.places.map((p) => [p.id, p]));
+const map = createMap($("#map"), model, {
+  onStationTap: openStation, places: PLACES.places, onPlaceTap: openPlace, icons: PLACE_ICONS, roads: ROADS.roads,
+});
 
 // ---------------- location (device only) ----------------
 let watchId = null;
@@ -145,14 +149,47 @@ function renderChrome() {
 }
 
 // Train markers for the map, never mixing kinds without saying so.
+// How far live trains run from the timetable, per line and direction, judged
+// from the live arrivals at the open station. Used to shift the timetable so
+// the rest of that line follows the live timing.
+function liveTiming(now) {
+  const out = new Map(); // `${line}|${towards}` -> { late, station, next, horizon }
+  for (const [lineId, live] of state.live) {
+    if (!live.data || isStale(live)) continue;
+    const byDir = new Map();
+    for (const a of live.data.arrivals) {
+      if (a.line !== lineId || a.etaAt < now - 30000) continue;
+      if (!byDir.has(a.towards)) byDir.set(a.towards, []);
+      byDir.get(a.towards).push(a);
+    }
+    for (const [towards, list] of byDir) {
+      const station = list[0].station;
+      const dir = directionsAt(model, lineId, station).find((d) => d.terminusId === towards);
+      if (!dir) continue;
+      const first = Math.min(...list.map((a) => a.etaAt));
+      const sched = scheduledEtasAt(model, lineId, station, dir.next, first - 30 * 60000, first + 30 * 60000);
+      if (!sched.length) continue;
+      const nearest = sched.reduce((b, t) => (Math.abs(t - first) < Math.abs(b - first) ? t : b));
+      out.set(`${lineId}|${towards}`, {
+        late: (first - nearest) / 60000, station, next: dir.next, horizon: Math.max(...list.map((a) => a.etaAt)),
+      });
+    }
+  }
+  return out;
+}
+
+// Train markers for the map: one best estimate per train.
+//  - live lines: trains approaching the open station are worked back from their
+//    live arrival times; the rest of the line follows the timetable shifted to
+//    the live timing;
+//  - other lines: the timetable, assuming trains run on time.
 function mapTrains() {
   const now = Date.now();
   if (state.demo && state.feed) {
     return { trains: state.feed.positions, note: `<span class="tag demo">DEMO</span> Simulated train markers` };
   }
-  const liveLines = new Set();
   const trains = [];
-  // Approaching trains placed back along the line from their live countdowns.
+  const liveLines = new Set();
   for (const [lineId, live] of state.live) {
     if (!live.data || isStale(live)) continue;
     liveLines.add(lineId);
@@ -165,12 +202,25 @@ function mapTrains() {
     }
     trains.push(...live.data.positions);
   }
-  const schedLines = state.scheduled ? NETWORK.lines.map((l) => l.id).filter((id) => !liveLines.has(id)) : [];
-  trains.push(...scheduledPositions(model, schedLines, now));
+  const timing = liveTiming(now);
+  trains.push(...scheduledPositions(model, NETWORK.lines.map((l) => l.id), now, {
+    shift: (lineId, towards) => timing.get(`${lineId}|${towards}`)?.late || 0,
+    // Trips that will reach the open station within the live horizon are already shown from live data.
+    skip: (trip, late) => {
+      const t = timing.get(`${trip.lineId}|${trip.stops[trip.stops.length - 1]}`);
+      if (!t) return false;
+      for (let i = 0; i < trip.stops.length - 1; i++) {
+        if (trip.stops[i] !== t.station || trip.stops[i + 1] !== t.next) continue;
+        const eta = trip.dep + (trip.cum[i] + late) * 60000;
+        if (eta > now - 30000 && eta <= t.horizon + 60000) return true;
+      }
+      return false;
+    },
+  }));
   const parts = [];
-  if (liveLines.size) parts.push(`<span class="tag live">LIVE</span> estimated from live arrivals (unofficial)`);
-  if (schedLines.length) parts.push(`<span class="tag ttag">SCHEDULED</span> where trains should be if on time`);
-  return { trains, note: parts.join("<br>") || `No train positions shown` };
+  if (liveLines.size) parts.push(`<span class="tag live">LIVE</span> positions from live times (unofficial)`);
+  parts.push(`<span class="tag ttag">SCHEDULED</span> timetable, if on time`);
+  return { trains, note: parts.join(" ") };
 }
 
 function locationMessage() {
@@ -203,7 +253,7 @@ function renderHome() {
     <div class="actions">
       <button class="primary" id="use-loc">📍 Use my location</button>
       <button id="pick">Choose station</button>
-      <button id="places-btn" class="wide">🗺️ Bangkok top 100 places</button>
+      <button id="places-btn" class="wide">🗺️ Bangkok top 100+ places</button>
     </div>
     ${locationMessage()}`;
   if (state.location) {
@@ -230,18 +280,20 @@ function nearestToPlace(pl, n = 3) {
 }
 
 function placeBadge(pl, size = 40) {
-  return `<span class="pl-badge" style="--pc:${PLACE_COLORS[pl.category] || "#4a5568"};--sz:${size}px"><span>${pl.emoji}</span><b>${pl.rank}</b></span>`;
+  const icon = PLACE_ICONS[pl.id] || PLACE_ICONS[pl.icon];
+  const art = icon ? `<svg viewBox="0 0 32 32" aria-hidden="true">${icon}</svg>` : `<span>${pl.emoji}</span>`;
+  return `<span class="pl-badge" style="--pc:${PLACE_COLORS[pl.category] || "#4a5568"};--sz:${size}px">${art}<b>${pl.id}</b></span>`;
 }
 
 function renderPlaces() {
   const q = state.placeQuery.trim().toLowerCase();
   const list = PLACES.places.filter((p) => !q || `${p.name} ${p.note} ${p.category}`.toLowerCase().includes(q));
   return `
-    <div class="panel-head"><button class="back" data-go="home">‹ Back</button><h2>Bangkok top 100</h2></div>
+    <div class="panel-head"><button class="back" data-go="home">‹ Back</button><h2>Bangkok top 100+</h2></div>
     <input id="place-q" class="search" type="search" placeholder="Search places (e.g. temple, rooftop, market)" value="${esc(state.placeQuery)}" autocomplete="off">
     <ul class="list">${list.map((p) => {
       const near = nearestToPlace(p, 1)[0];
-      return `<li><button class="row" data-place="${p.rank}">
+      return `<li><button class="row" data-place="${esc(p.id)}">
         <span class="pl-row">${placeBadge(p, 38)}<span class="row-main"><span class="name">${esc(p.name)}</span><small class="muted">${esc(p.note)}</small></span></span>
         <span class="walk"><small>${esc(near.station.name)}</small><br><b>${near.walkMin} min</b> walk</span>
       </button></li>`;
@@ -250,32 +302,31 @@ function renderPlaces() {
 }
 
 function renderPlace() {
-  const pl = placeByRank.get(state.placeRank);
+  const pl = placeById.get(state.placeRank);
   const near = nearestToPlace(pl, 3);
   const mine = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0] : null;
-  const kind = pl.areas ? "Outlined area on the map" : pl.lines ? "Highlighted street on the map" : pl.spots ? `${pl.spots.length} places` : "Point on the map";
+  const kind = pl.areas ? "Outlined area on the map" : pl.lines ? "Highlighted street on the map" : "Point on the map";
   return `
     <div class="panel-head"><button class="back" data-go="places">‹ Top 100</button></div>
-    <div class="place-hero">${placeBadge(pl, 64)}<div><h2>${esc(pl.name)}</h2><div class="muted">#${pl.rank} · ${esc(pl.category)}</div></div></div>
+    <div class="place-hero">${placeBadge(pl, 64)}<div><h2>${esc(pl.name)}</h2><div class="muted">#${esc(pl.id)}${pl.extra ? " (added)" : ""} · ${esc(pl.category)}</div></div></div>
     ${pl.note ? `<p>${esc(pl.note)}</p>` : ""}
-    ${pl.spots ? `<ul class="list">${pl.spots.map((sp) => `<li class="spot">${esc(sp.label)} <small class="muted">${esc(sp.found || "")}</small></li>`).join("")}</ul>` : ""}
     <p class="fine">${kind}${pl.approx ? " · position approximate" : ""}.</p>
     <h3 class="section-h">Nearest stations</h3>
     <ul class="list">${near.map((n) => `<li><button class="row" data-station="${esc(n.station.id)}">
       <span class="row-main"><span class="name">${esc(n.station.name)}</span><span class="lines">${stationLines(n.station)}</span></span>
       <span class="walk"><b>${n.walkMin} min</b> walk<br><small>${formatDistance(n.meters)}</small></span></button></li>`).join("")}</ul>
     <div class="actions">
-      <button class="primary" data-route-to-place="${pl.rank}">${mine ? `Route from ${esc(mine.station.name)}` : "Plan a route here"}</button>
+      <button class="primary" data-route-to-place="${esc(pl.id)}">${mine ? `Route from ${esc(mine.station.name)}` : "Plan a route here"}</button>
       <a class="btn-link" href="https://maps.apple.com/?q=${encodeURIComponent(pl.name)}&ll=${pl.lat},${pl.lon}" target="_blank" rel="noopener">Open in Maps</a>
     </div>`;
 }
 
-function openPlace(rank) {
-  const pl = placeByRank.get(rank);
+function openPlace(id) {
+  const pl = placeById.get(String(id));
   if (!pl) return;
-  state.placeRank = rank;
+  state.placeRank = pl.id;
   state.view = "place";
-  map.selectPlace(rank);
+  map.selectPlace(pl.id);
   const near = nearestToPlace(pl, 1)[0];
   map.highlight([near.station.id]);
   map.focusOn([pl, near.station], 1200);
@@ -432,7 +483,8 @@ function renderStation() {
     const live = state.live.get(lineId);
     const dirs = directionsAt(model, lineId, s.id).map((d) => {
       let body;
-      if (live && live.data) {
+      if (live && live.data && nextTrains(live, s.id, d.terminusId).length) {
+        // Live times for this direction: use them.
         body = renderLive(live, s.id, d.terminusId, needMin);
       } else if (state.demo) {
         const etas = (state.feed?.etas.get(d.key) || []).map((e) => Math.max(0, e - elapsed));
@@ -440,10 +492,9 @@ function renderStation() {
           ? `<ul class="etas">${etas.map((e) => `<li class="${stale ? "is-stale" : ""}"><span class="eta">${e < 45 ? "Now" : `${Math.round(e / 60)} min`}</span>${catchTag(e, needMin)}</li>`).join("")}</ul>
              <div class="src"><span class="tag demo">DEMO</span> simulated countdown</div>`
           : `<div class="src muted">No demo data yet.</div>`;
-      } else if (state.scheduled) {
-        body = (live ? renderLive(live, s.id, d.terminusId, needMin) + "<hr class=\"thin\">" : "") + renderScheduled(lineId, s.id, d.next, needMin);
       } else {
-        body = live ? renderLive(live, s.id, d.terminusId, needMin) : `<div class="src"><span class="tag na">Live arrivals unavailable</span></div>`;
+        // No live times for this direction: the timetable, assuming trains run on time.
+        body = renderScheduled(lineId, s.id, d.next, needMin);
       }
       const term = model.stations.get(d.terminusId);
       return `<div class="dir">
@@ -452,18 +503,14 @@ function renderStation() {
           ${body}
         </div>`;
     }).join("");
-    const ttBlock = tt.status !== "ok"
-      ? `<div class="tt"><span class="tag na">Timetable unavailable</span> ${esc(tt.reason)}</div>`
-      : `<div class="tt"><span class="tag ttag">Timetable estimate</span>
-          ${tt.inService
-            ? `Trains about every <b>${formatHeadway(tt.headwayMin)}</b> now (${tt.dayType} timetable, ${esc(tt.periodLabel)}).`
-            : `<b>Outside published service hours</b>.`}
-          Service ${esc(tt.hours)}.
-          ${tt.note ? `<span class="fine">${esc(tt.note)}</span>` : ""}
-          <span class="fine">${tt.verified ? "Operator-published" : "Unverified, secondary source"} · <a href="${esc(tt.source)}" target="_blank" rel="noopener">source</a></span></div>`;
+    // Next trains come from live times or the timetable (above); only say
+    // when the line isn't running.
+    const ttBlock = tt.status === "ok" && !tt.inService
+      ? `<div class="tt"><b>No trains now.</b> Service ${esc(tt.hours)}.</div>`
+      : "";
     return `<section class="line-block" style="--c:${line.color}">
         <h3>${lineChip(lineId, code)}</h3>
-        ${live ? liveStatusLine(live) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")}${state.scheduled ? " Times below are from the timetable." : ""}</p>`}
+        ${live ? liveStatusLine(live) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")} Times below are from the timetable.</p>`}
         <div class="dirs">${dirs}</div>
         ${ttBlock}
       </section>`;
@@ -569,10 +616,10 @@ $("#panel").addEventListener("click", (e) => {
   if (e.target.closest("#pick")) { state.view = "pick"; render(); }
   if (e.target.closest("#places-btn")) { state.view = "places"; render(); return; }
   const pr = e.target.closest("[data-place]");
-  if (pr) { openPlace(Number(pr.dataset.place)); return; }
+  if (pr) { openPlace(pr.dataset.place); return; }
   const rp = e.target.closest("[data-route-to-place]");
   if (rp) {
-    const pl = placeByRank.get(Number(rp.dataset.routeToPlace));
+    const pl = placeById.get(rp.dataset.routeToPlace);
     state.route.to = nearestToPlace(pl, 1)[0].station.id;
     state.route.from = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0].station.id : null;
     state.route.q = "";
@@ -614,13 +661,6 @@ unofficialToggle.onchange = () => {
   state.unofficial = unofficialToggle.checked;
   store.set("unofficial", state.unofficial);
   setupLive();
-  render();
-};
-const scheduledToggle = $("#scheduled-toggle");
-scheduledToggle.checked = state.scheduled;
-scheduledToggle.onchange = () => {
-  state.scheduled = scheduledToggle.checked;
-  store.set("scheduled", state.scheduled);
   render();
 };
 $("#sim-stale").onchange = (e) => { state.simStale = e.target.checked; refreshFeed(); render(); };

@@ -12,6 +12,8 @@
   --map-bg: #eef1f5;
   --demo: #c2410c;
   --water: #9cc7e6;
+  --road: #ffffff;
+  --road-edge: #d5dbe4;
   --water-ink: #2b6a99;
   --park: #cfe8c4;
   --park-edge: #9cc98a;
@@ -23,14 +25,14 @@
     --bg: #0b1020; --card: #141a2e; --ink: #e7ecf5; --muted: #9aa5b8; --line: #263049;
     --accent: #7aa2ff; --good: #4ade80; --bad: #f87171; --warn-bg: #3a2c05; --warn-ink: #fcd77a;
     --map-bg: #10162a; --demo: #fb923c; color-scheme: dark;
-    --water: #1d4466; --water-ink: #8ec3ee; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
+    --water: #1d4466; --water-ink: #8ec3ee; --road: #2a3350; --road-edge: #1b2238; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0b1020; --card: #141a2e; --ink: #e7ecf5; --muted: #9aa5b8; --line: #263049;
   --accent: #7aa2ff; --good: #4ade80; --bad: #f87171; --warn-bg: #3a2c05; --warn-ink: #fcd77a;
   --map-bg: #10162a; --demo: #fb923c; color-scheme: dark;
-    --water: #1d4466; --water-ink: #8ec3ee; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
+    --water: #1d4466; --water-ink: #8ec3ee; --road: #2a3350; --road-edge: #1b2238; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
 }
 
 * { box-sizing: border-box; }
@@ -108,7 +110,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .net-map .train .mini { display: none; stroke: #fff; stroke-width: 1.2; }
 .net-map[data-detail="low"] .train .mini { display: inline; }
 .net-map[data-detail="low"] .train .body { display: none; }
-.net-map .train.live-est .body, .net-map .train.live .body { filter: drop-shadow(0 0 2.2px rgba(22, 163, 74, 0.95)); }
+.net-map .train.live-est .body, .net-map .train.live .body, .net-map .train.live-sched .body { filter: drop-shadow(0 0 2.2px rgba(22, 163, 74, 0.95)); }
 .net-map .train.demo .shell { stroke: var(--demo); stroke-dasharray: 2 1.2; }
 /* Boarding / alighting while a train stands at the platform. */
 .net-map .train .pax { display: none; }
@@ -285,7 +287,7 @@ hr.thin { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
 .net-map .place .pl-bg { fill: var(--card); stroke: var(--pc); stroke-width: 2.5; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.25)); }
 .net-map .place.sel .pl-bg { stroke-width: 4; }
 .net-map .place .pl-emoji { font-size: 15px; stroke: none; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
-.net-map .place .pl-rank circle { fill: var(--pc); stroke: var(--card); stroke-width: 1.2; }
+.net-map .place .pl-rank rect { fill: var(--pc); stroke: var(--card); stroke-width: 1.2; }
 .net-map .place .pl-rank text { font-size: 7.5px; font-weight: 800; fill: #fff; stroke: none; }
 .net-map .place:focus-visible .pl-bg { stroke: var(--accent); stroke-width: 4; }
 
@@ -299,3 +301,14 @@ hr.thin { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
 .place-hero { display: flex; align-items: center; gap: 14px; margin: 6px 0 4px; }
 .place-hero h2 { margin: 0; font-size: 20px; }
 .spot { padding: 6px 2px; }
+
+/* Major roads: quiet, under the rail lines. */
+.net-map .road-casing { fill: none; stroke: var(--road-edge); stroke-width: calc(3.6px / var(--zoom, 1)); stroke-linecap: round; stroke-linejoin: round; }
+.net-map .road { fill: none; stroke: var(--road); stroke-width: calc(2.4px / var(--zoom, 1)); stroke-linecap: round; stroke-linejoin: round; }
+.net-map[data-detail="mid"] .road-casing, .net-map[data-detail="high"] .road-casing { stroke-width: calc(6px / var(--zoom, 1)); }
+.net-map[data-detail="mid"] .road, .net-map[data-detail="high"] .road { stroke-width: calc(4.4px / var(--zoom, 1)); }
+.net-map .road-lbl { font-size: 9.5px; font-weight: 600; fill: var(--muted); letter-spacing: 0.02em; }
+.net-map .place .pl-art { pointer-events: none; }
+
+.pl-badge svg { width: calc(var(--sz) * 0.78); height: calc(var(--sz) * 0.78); display: block; }
+.panel-head h2 small { font-size: 13px; font-weight: 500; }

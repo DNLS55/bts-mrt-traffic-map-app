@@ -32,9 +32,9 @@ export function createMap(container, model, { onStationTap }) {
   const linesG = el("g", { class: "lines" }, root);
   const xferG = el("g", { class: "xfers" }, root);
   const stationsG = el("g", { class: "stations" }, root);
-  const trainsG = el("g", { class: "trains" }, root);
   const meG = el("g", { class: "me" }, root);
-  // Screen-space layers: text and furniture keep their size at any zoom.
+  // Screen-space layers: trains, text and furniture keep their size at any zoom.
+  const trainsG = el("g", { class: "trains" }, svg);
   const labelsG = el("g", { class: "labels" }, svg);
   const furnG = el("g", { class: "furniture" }, svg);
 
@@ -205,7 +205,7 @@ export function createMap(container, model, { onStationTap }) {
     // when zoomed in, as a thin line when zoomed out.
     svg.style.setProperty("--river-px", `${Math.min(Math.max(300 / M_PER_UNIT * view.s, 3), 40)}px`);
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => { placeLabels(); placeFurniture(); });
+    raf = requestAnimationFrame(() => { placeLabels(); placeFurniture(); placeTrains(); });
   }
 
   function fit(b = bounds, pad = 20) {
@@ -286,11 +286,55 @@ export function createMap(container, model, { onStationTap }) {
     el("circle", { cx: p.x, cy: p.y, r: 3.2, class: "dot" }, meG);
   }
 
+  // Mini trains: a car body in the line colour with a rounded nose and a dark
+  // windscreen at the front, rotated to the direction of travel. Trains that
+  // are standing at a platform show passengers getting on and off.
+  const trainEls = new Map(); // id -> { g, p, angle }
+  function makeTrain(t) {
+    const color = model.lines.get(t.lineId).color;
+    const g = el("g", { class: `train ${t.kind}` }, trainsG);
+    const pax = el("g", { class: "pax", "aria-hidden": "true" }, g);
+    for (const [x, side, delay] of [[-16, -1, 0], [-11, 1, 0.35], [-4, -1, 0.7], [1, 1, 1.05], [-8, -1, 1.2]]) {
+      el("circle", { cx: x, cy: 0, r: 1.3, class: `p ${side < 0 ? "up" : "down"}`, style: `animation-delay:${delay}s` }, pax);
+    }
+    // Rear car, then the leading car with the nose.
+    el("rect", { x: -22, y: -3.4, width: 12, height: 6.8, rx: 2, fill: color, class: "car" }, g);
+    el("rect", { x: -20.5, y: -1.3, width: 9, height: 2.6, rx: 1, class: "win" }, g);
+    el("rect", { x: -9, y: -3.4, width: 15, height: 6.8, rx: 2.2, fill: color, class: "car" }, g);
+    el("path", { d: "M5.5 -3.4 Q 11 -3.4 11 0 Q 11 3.4 5.5 3.4 Z", fill: color, class: "car" }, g);
+    el("rect", { x: -7.2, y: -1.3, width: 10.5, height: 2.6, rx: 1, class: "win" }, g);
+    el("path", { d: "M7 -2.4 Q 9.6 -2 9.6 0 Q 9.6 2 7 2.4 Z", class: "screen" }, g);
+    return g;
+  }
   function setTrains(trains) {
-    trainsG.replaceChildren();
-    for (const t of trains) {
-      const p = project(t.lat, t.lon);
-      el("circle", { cx: p.x, cy: p.y, r: 2.6, fill: model.lines.get(t.lineId).color, class: `train ${t.kind}` }, trainsG);
+    const seen = new Set();
+    trains.forEach((t, i) => {
+      const id = t.id || `${t.kind}|${t.lineId}|${i}`;
+      seen.add(id);
+      let rec = trainEls.get(id);
+      if (!rec || !rec.g.isConnected || !rec.g.classList.contains(t.kind)) {
+        rec?.g.remove();
+        rec = { g: makeTrain(t) };
+        trainEls.set(id, rec);
+      }
+      rec.p = project(t.lat, t.lon);
+      const a = t.ahead ? project(t.ahead.lat, t.ahead.lon) : null;
+      if (a && (a.x !== rec.p.x || a.y !== rec.p.y)) rec.angle = (Math.atan2(a.y - rec.p.y, a.x - rec.p.x) * 180) / Math.PI;
+      rec.g.classList.toggle("dwell", Boolean(t.dwell));
+    });
+    for (const [id, rec] of trainEls) if (!seen.has(id)) { rec.g.remove(); trainEls.delete(id); }
+    placeTrains();
+  }
+  function placeTrains() {
+    const w = svg.clientWidth || 360;
+    const h = svg.clientHeight || 360;
+    const k = Math.min(Math.max(0.5 + view.s / 24, 0.55), 1.5);
+    for (const rec of trainEls.values()) {
+      const x = rec.p.x * view.s + view.x;
+      const y = rec.p.y * view.s + view.y;
+      const off = x < -20 || y < -20 || x > w + 20 || y > h + 20;
+      rec.g.style.display = off ? "none" : "";
+      if (!off) rec.g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${(rec.angle || 0).toFixed(1)}) scale(${k.toFixed(2)})`);
     }
   }
 
@@ -304,6 +348,7 @@ export function createMap(container, model, { onStationTap }) {
   }
 
   function focusOn(points, minSpanM = 2000) {
+    focusedEarly = true;
     const ps = points.map((p) => project(p.lat, p.lon));
     const b = {
       minX: Math.min(...ps.map((p) => p.x)), maxX: Math.max(...ps.map((p) => p.x)),
@@ -318,7 +363,9 @@ export function createMap(container, model, { onStationTap }) {
     fit(b, 30);
   }
 
-  requestAnimationFrame(() => fit());
+  // Initial overview, unless a station was focused before the first frame.
+  let focusedEarly = false;
+  requestAnimationFrame(() => { if (!focusedEarly) fit(); });
   window.addEventListener("resize", () => apply());
 
   return {

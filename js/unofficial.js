@@ -11,7 +11,7 @@
 // Checked 2026-10-06: Sukhumvit, Silom, Yellow, Pink (incl. Muang Thong Thani
 // branch) return countdowns with train numbers; Gold returns "line unavailable".
 
-import { segment, pointAlong } from "./route.js";
+import { segment, pointAndAhead } from "./route.js";
 
 export const UNOFFICIAL = {
   id: "bangkoktransit",
@@ -109,7 +109,9 @@ export function estimatePosition(model, arrival, now = Date.now()) {
       return { lat: s.lat, lon: s.lon, atTerminus: true };
     }
     const seg = segment(model, arrival.line, prev, cur);
-    if (remaining <= seg.minutes) return pointAlong(seg.pts, 1 - remaining / seg.minutes);
+    // Within the last ~25 s the train is pulling in / standing at the platform.
+    if (remaining <= 0.4 && cur === arrival.station) return { ...pointAndAhead(seg.pts, 1), dwell: true };
+    if (remaining <= seg.minutes) return pointAndAhead(seg.pts, 1 - remaining / seg.minutes);
     remaining -= seg.minutes;
     cur = prev;
     idx -= sign;

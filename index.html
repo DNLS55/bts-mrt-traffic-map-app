@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>BTS/MRT Traffic Map</title>
   <meta name="description" content="Bangkok BTS and MRT stations near you, with arrivals where verified data exists.">
+  <meta name="author" content="Professor Daniel Schlagwein">
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -42,11 +43,11 @@
 
   <dialog id="settings">
     <form method="dialog" class="sheet">
-      <header class="sheet-head"><h2>Settings &amp; data</h2><button class="icon-btn" aria-label="Close">✕</button></header>
+      <header class="sheet-head"><h2>Settings &amp; data</h2><button class="icon-btn" aria-label="Close settings">✕</button></header>
       <h3>Train times</h3>
       <label class="toggle"><input type="checkbox" id="scheduled-toggle"> Timetable estimates <small>(where trains should be if on time, labelled SCHEDULED)</small></label>
       <label class="toggle"><input type="checkbox" id="unofficial-toggle"> Unofficial live arrivals <small>(BTS Sukhumvit, Silom, Yellow, Pink, from bangkoktransit.com)</small></label>
-      <p class="fine">bangkoktransit.com is a third-party site, not affiliated with or endorsed by BTS. Its times are real but unofficial, it may stop working or ask for a sign-in, and this phone contacts it directly while a covered station is open. For personal use.</p>
+      <p class="fine">On by default. bangkoktransit.com is a third-party site, not affiliated with or endorsed by BTS. Its times are real but unofficial, it may stop working or ask for a sign-in, and this phone contacts it directly while a covered station is open. For personal use.</p>
       <label class="toggle"><input type="checkbox" id="demo-toggle"> Demo mode <small>(simulated trains, clearly labelled)</small></label>
       <fieldset id="demo-tests" disabled>
         <legend>Demo test switches</legend>
@@ -64,6 +65,8 @@
       <div id="coverage"></div>
       <p class="fine">Your location is used only on this device to find nearby stations. The map is drawn locally; no map tiles or location data are sent to any server.</p>
       <p class="fine" id="data-src"></p>
+      <p class="copyright">© 2026 Professor Daniel Schlagwein. All rights reserved. No responsibility taken; for demonstration purposes only.</p>
+      <button class="done-btn" value="close">Done</button>
     </form>
   </dialog>
 

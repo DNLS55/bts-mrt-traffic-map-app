@@ -95,11 +95,23 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .net-map .park-lbl { fill: var(--park-ink); }
 .net-map .me .dot { fill: #2563eb; stroke: #fff; r: calc(6px / var(--zoom, 1)); stroke-width: calc(2.5px / var(--zoom, 1)); }
 .net-map .me .acc { fill: rgba(37, 99, 235, 0.14); stroke: rgba(37, 99, 235, 0.4); stroke-width: calc(1px / var(--zoom, 1)); }
-.net-map .train { r: calc(5px / var(--zoom, 1)); stroke: #fff; stroke-width: calc(1.5px / var(--zoom, 1)); }
-.net-map .train.demo { stroke-dasharray: calc(2px / var(--zoom, 1)) calc(1.5px / var(--zoom, 1)); stroke: var(--demo); }
-.net-map .train.live { stroke: var(--card); stroke-width: calc(2px / var(--zoom, 1)); }
-.net-map .train.live-est { stroke: var(--card); stroke-width: calc(2px / var(--zoom, 1)); r: calc(5.5px / var(--zoom, 1)); }
-.net-map .train.scheduled { fill-opacity: 0.35; stroke: currentColor; stroke-width: calc(1.2px / var(--zoom, 1)); stroke-dasharray: calc(1.5px / var(--zoom, 1)) calc(1.5px / var(--zoom, 1)); r: calc(4px / var(--zoom, 1)); }
+.net-map .train .car { stroke: #fff; stroke-width: 0.9; }
+.net-map .train .win { fill: #fff; opacity: 0.8; }
+.net-map .train .screen { fill: #0b1430; opacity: 0.75; }
+.net-map .train.scheduled { opacity: 0.85; }
+.net-map .train.demo .car { stroke: var(--demo); stroke-dasharray: 1.6 1.2; }
+.net-map .train.live-est .car, .net-map .train.live .car { stroke: var(--ink); stroke-width: 1.3; }
+/* Boarding / alighting while a train stands at the platform. */
+.net-map .train .pax { display: none; }
+.net-map:not([data-detail="low"]) .train.dwell .pax { display: inline; }
+.net-map .train .pax .p { fill: var(--ink); opacity: 0; }
+.net-map .train.dwell .pax .p.up { animation: pax-up 1.4s ease-in-out infinite; }
+.net-map .train.dwell .pax .p.down { animation: pax-down 1.4s ease-in-out infinite; }
+@keyframes pax-up { 0% { transform: translateY(-9px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(-2px); opacity: 0; } }
+@keyframes pax-down { 0% { transform: translateY(2px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateY(9px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .net-map .train.dwell .pax .p { animation: none; opacity: 0.8; }
+}
 .net-map .north-arrow { fill: var(--ink); }
 .net-map .north-n { font-size: 10px; font-weight: 700; fill: var(--ink); text-anchor: middle; }
 .net-map .scale-bar { fill: var(--ink); }
@@ -186,10 +198,15 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .src { margin-top: 6px; font-size: 12px; }
 .tt { font-size: 14px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
 
-dialog { border: 0; padding: 0; width: min(560px, 100vw); max-height: 92vh; border-radius: 18px 18px 0 0; margin: auto auto 0; background: var(--card); color: var(--ink); }
+/* Bottom sheet that always stays clear of the status bar / Dynamic Island,
+   with a pinned header so the close button is reachable. */
+dialog { border: 0; padding: 0; width: min(560px, 100vw); max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 64px); border-radius: 18px 18px 0 0; margin: auto auto 0; background: var(--card); color: var(--ink); overscroll-behavior: contain; }
 dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .sheet { padding: 12px 16px calc(env(safe-area-inset-bottom) + 20px); }
-.sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 2; background: var(--card); margin: -12px -16px 0; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
+.sheet-head .icon-btn { min-width: 44px; height: 44px; }
+.done-btn { width: 100%; min-height: 48px; margin-top: 14px; border-radius: 14px; border: 0; background: var(--accent); color: var(--card); font-weight: 700; cursor: pointer; }
+.copyright { font-size: 11px; color: var(--muted); margin: 18px 0 4px; line-height: 1.4; }
 .sheet h2 { font-size: 18px; margin: 0; }
 .sheet h3 { font-size: 15px; margin: 16px 0 6px; }
 .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; }

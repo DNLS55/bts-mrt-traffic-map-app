@@ -125,7 +125,7 @@ export function createDemoFeed(model) {
         const base = mod(nowMin, sim.headway);
         for (let phase = base; phase < sim.cycle; phase += sim.headway) {
           const p = positionAt(model, sim, phase);
-          if (p) out.push({ ...p, lineId: sim.line.id, kind: "demo" });
+          if (p) out.push({ ...p, lineId: sim.line.id, kind: "demo", id: `d|${sim.line.id}|${Math.round(phase - base)}` });
         }
       }
       return out;
@@ -149,9 +149,11 @@ function positionAt(model, sim, phase) {
   if (a.lat == null || b.lat == null) return null;
   const span = sim.t[i] - sim.t[i - 1] - DEMO_DWELL_MIN;
   const f = Math.min(1, Math.max(0, (x - sim.t[i - 1]) / span));
+  const ahead = forward ? b : a;
   return {
     lat: a.lat + (b.lat - a.lat) * f,
     lon: a.lon + (b.lon - a.lon) * f,
+    ahead: { lat: ahead.lat, lon: ahead.lon },
     towards: forward ? sim.route[sim.route.length - 1] : sim.route[0],
   };
 }

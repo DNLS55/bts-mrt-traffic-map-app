@@ -7,7 +7,7 @@
 // never labelled live. Real trains drift from this, especially late in the day.
 
 import { SCHEDULE } from "./schedule.js";
-import { segment, pointAlong } from "./route.js";
+import { segment, pointAndAhead } from "./route.js";
 
 // First departure from each origin (station code), weekday / weekend.
 // Sources as in schedule.js; entries marked * are assumptions where the
@@ -128,8 +128,9 @@ export function scheduledPositions(model, lineIds, now = Date.now()) {
       while (k < trip.segs.length - 1 && trip.cum[k + 1] <= elapsed) k++;
       const seg = trip.segs[k];
       const ride = Math.max(seg.minutes - 0.5, 0.1); // last 0.5 min of each segment is the dwell
-      const p = pointAlong(seg.pts, Math.min((elapsed - trip.cum[k]) / ride, 1));
-      out.push({ ...p, lineId, kind: "scheduled" });
+      const f = (elapsed - trip.cum[k]) / ride;
+      const p = pointAndAhead(seg.pts, Math.min(f, 1));
+      out.push({ ...p, lineId, kind: "scheduled", dwell: f >= 1, id: `s|${lineId}|${trip.stops[0]}|${trip.dep}` });
     }
   }
   return out;

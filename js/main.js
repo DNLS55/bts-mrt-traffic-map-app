@@ -32,10 +32,11 @@ const state = {
   online: navigator.onLine,
   feed: null, // demo only: {updatedAt, fetchedAt, etas: Map(directionKey -> seconds[]), positions}
   live: new Map(), // lineId -> poll state of the live source covering it
-  unofficial: store.get("unofficial", false), // opt-in bangkoktransit.com feed
+  unofficial: store.get("unofficial", true), // bangkoktransit.com feed: on unless switched off
   scheduled: store.get("scheduled", true), // timetable-based estimates for lines without live data
 };
 const HOSTED_URL = "https://dnls55.github.io/bts-mrt-traffic-map-app/";
+const COPYRIGHT_HTML = `<p class="copyright">© 2026 Professor Daniel Schlagwein. All rights reserved. No responsibility taken; for demonstration purposes only.</p>`;
 const embedded = (() => { try { return window.top !== window.self; } catch { return true; } })();
 
 const demoFeed = createDemoFeed(model);
@@ -156,7 +157,7 @@ function mapTrains() {
       if (a.line !== lineId || seen.has(`${a.towards}|${a.train}`)) continue;
       seen.add(`${a.towards}|${a.train}`);
       const p = estimatePosition(model, a, now);
-      if (p && !p.atTerminus) trains.push({ ...p, lineId, kind: "live-est" });
+      if (p && !p.atTerminus) trains.push({ ...p, lineId, kind: "live-est", id: `l|${lineId}|${a.towards}|${a.train}` });
     }
     trains.push(...live.data.positions);
   }
@@ -216,7 +217,7 @@ function renderHome() {
     map.highlight([]);
     html += `<p class="muted intro">Find stations near you, then tap one to see trains in both directions.</p>`;
   }
-  return html;
+  return html + COPYRIGHT_HTML;
 }
 
 function renderPicker() {
@@ -563,7 +564,8 @@ function setupLive() {
     const poll = startPolling(source, model, () => render(), { isOffline });
     poll.source = source;
     polls.push(poll);
-    for (const lineId of source.lines) state.live.set(lineId, poll.state);
+    // Earlier sources win: an official (or local test) feed beats the unofficial one.
+    for (const lineId of source.lines) if (!state.live.has(lineId)) state.live.set(lineId, poll.state);
   }
 }
 window.addEventListener("online", () => polls.forEach((p) => p.refresh()));

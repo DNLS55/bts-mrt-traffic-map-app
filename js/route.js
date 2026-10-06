@@ -74,6 +74,15 @@ export function pointAlong(pts, f) {
   return { lat: pts[0][0], lon: pts[0][1] };
 }
 
+// Point at fraction f plus a point a little further along, so the map can
+// point a train in its direction of travel.
+export function pointAndAhead(pts, f) {
+  const here = pointAlong(pts, f);
+  if (f < 0.97) return { ...here, ahead: pointAlong(pts, f + 0.03) };
+  const behind = pointAlong(pts, f - 0.03);
+  return { ...here, ahead: { lat: 2 * here.lat - behind.lat, lon: 2 * here.lon - behind.lon } };
+}
+
 function pathLength(pts) {
   let m = 0;
   for (let i = 1; i < pts.length; i++) {

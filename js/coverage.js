@@ -3,15 +3,15 @@
 const C = (s, t) => ({ s, t });
 const coords = C("yes", "Yes");
 const conn = C("yes", "Yes");
-const tta = C("blocked", "Exists, not permitted");
+const tta = C("blocked", "Official feed protected; unofficial opt-in");
 const none = C("no", "None found");
-const tt = C("yes", "Headways");
+const tt = C("yes", "Headways + on-time estimates");
 export const COVERAGE = {
   columns: ["Stations", "Connections", "Live arrivals", "Live positions", "Timetable"],
   rows: [
     { line: "BTS-SUK", cells: [coords, conn, tta, none, tt] },
     { line: "BTS-SIL", cells: [coords, conn, tta, none, tt] },
-    { line: "BTS-GLD", cells: [coords, conn, tta, none, tt] },
+    { line: "BTS-GLD", cells: [coords, conn, none, none, tt] },
     { line: "MRT-BL", cells: [coords, conn, none, none, tt] },
     { line: "MRT-PP", cells: [coords, conn, none, none, tt] },
     { line: "MRT-PK", cells: [coords, conn, tta, none, tt] },
@@ -21,7 +21,7 @@ export const COVERAGE = {
     { line: "SRT-DR", cells: [coords, conn, none, none, tt] },
     { line: "SRT-LR", cells: [C("yes", "Yes (GTFS)"), conn, none, none, tt] },
   ],
-  note: "“Exists, not permitted”: the BTS-group arrival service behind the operator's app is encrypted and key-protected, so it isn't used. No public live train-position data was found for any line, so no live trains are shown.",
+  note: "The BTS group's own arrival service is encrypted and key-protected, so the app doesn't use it. Settings can switch on unofficial live arrivals from bangkoktransit.com for Sukhumvit, Silom, Yellow and Pink; train positions are then estimated from those countdowns. Other lines show where trains should be if running on time (SCHEDULED).",
 };
 
 // Why each line has no live arrivals in the app (checked 2026-10-06).

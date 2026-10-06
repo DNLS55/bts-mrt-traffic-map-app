@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="BKK Rail">
+  <meta name="apple-mobile-web-app-title" content="BTS/MRT Map">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -16,7 +16,7 @@
 </head>
 <body>
   <header class="bar">
-    <h1>BTS/MRT Traffic Map</h1>
+    <h1><img src="icons/icon.svg" class="logo" alt="" width="28" height="28"> BTS/MRT Traffic Map</h1>
     <div class="chips">
       <span id="net-chip" class="chip" role="status"></span>
       <button id="settings-btn" class="icon-btn" aria-label="Settings and data sources">⋯</button>
@@ -43,12 +43,23 @@
   <dialog id="settings">
     <form method="dialog" class="sheet">
       <header class="sheet-head"><h2>Settings &amp; data</h2><button class="icon-btn" aria-label="Close">✕</button></header>
+      <h3>Train times</h3>
+      <label class="toggle"><input type="checkbox" id="scheduled-toggle"> Timetable estimates <small>(where trains should be if on time, labelled SCHEDULED)</small></label>
+      <label class="toggle"><input type="checkbox" id="unofficial-toggle"> Unofficial live arrivals <small>(BTS Sukhumvit, Silom, Yellow, Pink, from bangkoktransit.com)</small></label>
+      <p class="fine">bangkoktransit.com is a third-party site, not affiliated with or endorsed by BTS. Its times are real but unofficial, it may stop working or ask for a sign-in, and this phone contacts it directly while a covered station is open. For personal use.</p>
       <label class="toggle"><input type="checkbox" id="demo-toggle"> Demo mode <small>(simulated trains, clearly labelled)</small></label>
       <fieldset id="demo-tests" disabled>
         <legend>Demo test switches</legend>
         <label class="toggle"><input type="checkbox" id="sim-stale"> Simulate a stale feed</label>
         <label class="toggle"><input type="checkbox" id="sim-offline"> Simulate losing connection</label>
       </fieldset>
+      <h3>Install on iPhone</h3>
+      <ol class="install-steps">
+        <li>Open this page in <b>Safari</b>.</li>
+        <li>Tap the <b>Share</b> button (square with an arrow; on iOS 26 it's under <b>⋯</b>).</li>
+        <li>Choose <b>Add to Home Screen</b>, keep <b>Open as Web App</b> on if shown, then tap <b>Add</b>.</li>
+      </ol>
+      <p class="fine">It then opens full-screen from its own icon, works offline for the map and timetables, and asks for location the first time you tap Use my location.</p>
       <h3>Data coverage</h3>
       <div id="coverage"></div>
       <p class="fine">Your location is used only on this device to find nearby stations. The map is drawn locally; no map tiles or location data are sent to any server.</p>

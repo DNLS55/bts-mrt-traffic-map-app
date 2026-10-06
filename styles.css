@@ -49,7 +49,8 @@ a { color: var(--accent); }
   padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
   background: var(--card); border-bottom: 1px solid var(--line);
 }
-.bar h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+.bar h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+.bar h1 .logo { border-radius: 7px; flex: 0 0 auto; }
 .chips { display: flex; align-items: center; gap: 8px; }
 .chip { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; }
 .chip.good { color: var(--good); }
@@ -97,6 +98,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .net-map .train { r: calc(5px / var(--zoom, 1)); stroke: #fff; stroke-width: calc(1.5px / var(--zoom, 1)); }
 .net-map .train.demo { stroke-dasharray: calc(2px / var(--zoom, 1)) calc(1.5px / var(--zoom, 1)); stroke: var(--demo); }
 .net-map .train.live { stroke: var(--card); stroke-width: calc(2px / var(--zoom, 1)); }
+.net-map .train.live-est { stroke: var(--card); stroke-width: calc(2px / var(--zoom, 1)); r: calc(5.5px / var(--zoom, 1)); }
+.net-map .train.scheduled { fill-opacity: 0.35; stroke: currentColor; stroke-width: calc(1.2px / var(--zoom, 1)); stroke-dasharray: calc(1.5px / var(--zoom, 1)) calc(1.5px / var(--zoom, 1)); r: calc(4px / var(--zoom, 1)); }
 .net-map .north-arrow { fill: var(--ink); }
 .net-map .north-n { font-size: 10px; font-weight: 700; fill: var(--ink); text-anchor: middle; }
 .net-map .scale-bar { fill: var(--ink); }
@@ -160,7 +163,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .tag.demo { background: var(--demo); color: #fff; }
 .tag.live { background: var(--good); color: var(--card); }
 .tag.na { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
-.tag.tt { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.tag.ttag { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .tag.fresh { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 .tag.stale { background: var(--warn-bg); color: var(--warn-ink); }
 
@@ -226,3 +229,17 @@ td.cov.blocked { color: var(--warn-ink); }
 .leg.leg-ride { border-left: 6px solid var(--c); }
 .leg.leg-walk { border: 2px dashed var(--ink); }
 .leg.leg-change { background: var(--bg); }
+
+.etas li.sched .eta { font-weight: 600; }
+hr.thin { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+
+/* Phones in portrait: a tall, portrait-shaped map with the panel below it. */
+@media (max-width: 899px) and (orientation: portrait) {
+  .map-wrap { flex: 0 0 auto; height: min(58svh, calc(100vw * 1.35)); min-height: 300px; }
+  .panel { flex: 1 1 auto; min-height: 0; }
+}
+
+.note.install { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.note.install img { border-radius: 9px; flex: 0 0 auto; }
+.note.install span { flex: 1; min-width: 0; }
+.install-steps { margin: 4px 0 6px; padding-left: 20px; font-size: 14px; display: grid; gap: 4px; }

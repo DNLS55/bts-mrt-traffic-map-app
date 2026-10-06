@@ -1,8 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#0f172a"/>
-  <path d="M96 352 L208 240 L208 120" stroke="#7cb342" stroke-width="36" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M208 240 L416 240" stroke="#1e4fa3" stroke-width="36" fill="none" stroke-linecap="round"/>
-  <path d="M320 240 L320 400" stroke="#e91e78" stroke-width="36" fill="none" stroke-linecap="round"/>
-  <circle cx="208" cy="240" r="34" fill="#fff" stroke="#0f172a" stroke-width="10"/>
-  <circle cx="320" cy="240" r="26" fill="#fff" stroke="#0f172a" stroke-width="8"/>
+  <title>BTS/MRT Traffic Map</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16285a"/>
+      <stop offset="1" stop-color="#0b1430"/>
+    </linearGradient>
+  </defs>
+  <!-- Full-bleed square: iOS and Android apply their own rounded mask. -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- Rail lines (BTS green, MRT blue, MRT pink, MRT yellow) -->
+  <g fill="none" stroke-linecap="round" stroke-width="20">
+    <path d="M-20 392 C 120 352 220 420 532 360" stroke="#7cc242"/>
+    <path d="M-20 428 C 140 388 250 452 532 400" stroke="#3d7bf2"/>
+    <path d="M-20 464 C 150 428 270 486 532 440" stroke="#ec3a8c"/>
+    <path d="M-20 500 C 160 466 290 520 532 480" stroke="#f6c21c"/>
+  </g>
+  <!-- Map pin -->
+  <path d="M256 52c-86 0-152 64-152 148 0 104 152 236 152 236s152-132 152-236c0-84-66-148-152-148z" fill="#ffffff"/>
+  <!-- Train front -->
+  <rect x="190" y="112" width="132" height="146" rx="30" fill="#16285a"/>
+  <rect x="207" y="130" width="98" height="56" rx="12" fill="#9fd0ff"/>
+  <rect x="236" y="120" width="40" height="6" rx="3" fill="#9fd0ff"/>
+  <circle cx="220" cy="224" r="11" fill="#ffd34d"/>
+  <circle cx="292" cy="224" r="11" fill="#ffd34d"/>
+  <rect x="240" y="218" width="32" height="12" rx="6" fill="#ffffff" opacity="0.85"/>
+  <path d="M214 258 L198 288 M298 258 L314 288" stroke="#16285a" stroke-width="12" stroke-linecap="round"/>
 </svg>

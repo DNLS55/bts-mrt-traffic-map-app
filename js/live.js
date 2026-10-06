@@ -48,7 +48,8 @@ export function normalise(doc, model, receivedAt = Date.now()) {
     const station = byCode.get(`${a.line}|${a.station}`);
     const destination = byCode.get(`${a.line}|${a.destination}`);
     if (!station || !destination || !Number.isFinite(a.minutes)) continue;
-    arrivals.push({ line: a.line, station, destination, etaAt: sourceTime + a.minutes * 60000, train: a.train ?? null, platform: a.platform ?? null });
+    const towards = (a.towards && byCode.get(`${a.line}|${a.towards}`)) || destination;
+    arrivals.push({ line: a.line, station, towards, destination, etaAt: sourceTime + a.minutes * 60000, train: a.train ?? null, platform: a.platform ?? null });
   }
   const positions = (doc.positions || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon))
     .map((p) => ({ lineId: p.line, lat: p.lat, lon: p.lon, kind: "live", train: p.train ?? null }));
@@ -56,7 +57,9 @@ export function normalise(doc, model, receivedAt = Date.now()) {
 }
 
 // Polls one source; calls onUpdate(state) after every attempt.
-// state: { status: "loading"|"ok"|"error", data, error, lastOk, lastTry }
+// state: { status: "loading"|"idle"|"ok"|"error", data, error, lastOk, lastTry }
+// A source either has a `url` serving the contract above, or a `load()` that
+// returns normalised data (or null when there is nothing to fetch right now).
 export function startPolling(source, model, onUpdate, { fetchImpl = fetch, isOffline = () => false } = {}) {
   const state = { source, status: "loading", data: null, error: null, lastOk: null, lastTry: null };
   let timer = 0;
@@ -70,14 +73,25 @@ export function startPolling(source, model, onUpdate, { fetchImpl = fetch, isOff
       state.lastTry = Date.now();
       try {
         const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 10000);
-        const res = await fetchImpl(source.url, { cache: "no-store", signal: ctrl.signal });
+        const t = setTimeout(() => ctrl.abort(), 20000);
+        let data;
+        if (source.load) {
+          data = await source.load({ fetchImpl, signal: ctrl.signal });
+        } else {
+          const res = await fetchImpl(source.url, { cache: "no-store", signal: ctrl.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          data = normalise(await res.json(), model);
+        }
         clearTimeout(t);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        state.data = normalise(await res.json(), model);
-        state.status = "ok";
+        if (data === null) {
+          state.status = "idle";
+          state.data = null;
+        } else {
+          state.data = data;
+          state.status = "ok";
+          state.lastOk = Date.now();
+        }
         state.error = null;
-        state.lastOk = Date.now();
       } catch (e) {
         state.status = state.data ? "ok" : "error";
         state.error = e.name === "AbortError" ? "timed out" : e.message;
@@ -87,18 +101,28 @@ export function startPolling(source, model, onUpdate, { fetchImpl = fetch, isOff
     if (!stopped) timer = setTimeout(tick, source.pollMs || 20000);
   }
   tick();
-  return { state, stop: () => { stopped = true; clearTimeout(timer); }, refresh: () => { clearTimeout(timer); tick(); } };
+  return {
+    state,
+    stop: () => { stopped = true; clearTimeout(timer); },
+    // Re-fetch now; `reset` drops data that belongs to a previous station.
+    refresh: ({ reset = false } = {}) => {
+      if (reset) { state.data = null; state.status = "loading"; state.error = null; }
+      clearTimeout(timer);
+      tick();
+    },
+  };
 }
 
 export function isStale(state, now = Date.now()) {
   return !state?.data || now - state.data.sourceTime > LIVE_STALE_MS;
 }
 
-// Next trains at a station towards a destination, soonest first.
-export function nextTrains(state, stationId, destinationId, now = Date.now(), limit = 3) {
+// Next trains at a station heading towards a terminus, soonest first. A train
+// may stop short of that terminus (e.g. Samrong); `destination` says where.
+export function nextTrains(state, stationId, towardsId, now = Date.now(), limit = 3) {
   if (!state?.data) return [];
   return state.data.arrivals
-    .filter((a) => a.station === stationId && a.destination === destinationId && a.etaAt > now - 30000)
+    .filter((a) => a.station === stationId && (a.towards ?? a.destination) === towardsId && a.etaAt > now - 30000)
     .sort((a, b) => a.etaAt - b.etaAt)
     .slice(0, limit);
 }

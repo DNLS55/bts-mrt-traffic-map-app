@@ -5,6 +5,8 @@ import { createMap } from "./map.js";
 import { STALE_AFTER_MS, createDemoFeed, timetableFor, formatHeadway } from "./feeds.js";
 import { COVERAGE, LIVE_REASON } from "./coverage.js";
 import { sourcesFor, startPolling, isStale, nextTrains } from "./live.js";
+import { createUnofficialSource, estimatePosition, UNOFFICIAL } from "./unofficial.js";
+import { scheduledArrivals, scheduledPositions } from "./scheduled.js";
 import { buildGraph, planRoute } from "./route.js";
 
 const model = buildModel(NETWORK);
@@ -30,8 +32,11 @@ const state = {
   online: navigator.onLine,
   feed: null, // demo only: {updatedAt, fetchedAt, etas: Map(directionKey -> seconds[]), positions}
   live: new Map(), // lineId -> poll state of the live source covering it
+  unofficial: store.get("unofficial", false), // opt-in bangkoktransit.com feed
+  scheduled: store.get("scheduled", true), // timetable-based estimates for lines without live data
 };
-const liveSources = sourcesFor();
+const HOSTED_URL = "https://dnls55.github.io/bts-mrt-traffic-map-app/";
+const embedded = (() => { try { return window.top !== window.self; } catch { return true; } })();
 
 const demoFeed = createDemoFeed(model);
 const map = createMap($("#map"), model, { onStationTap: openStation });
@@ -129,28 +134,67 @@ function renderChrome() {
       : "No connection. Station map and walking times still work; arrivals can't be refreshed.";
   } else ob.hidden = true;
 
-  const livePositions = [...new Set(state.live.values())].flatMap((l) => (l.data && !isStale(l) ? l.data.positions : []));
-  const trains = livePositions.length ? livePositions : state.demo && state.feed ? state.feed.positions : [];
+  const { trains, note } = mapTrains();
   map.setTrains(trains);
-  $("#map-note").innerHTML = livePositions.length
-    ? `<span class="tag live">LIVE</span> Train positions from ${esc([...state.live.values()][0].data.source)}`
-    : state.demo
-      ? `<span class="tag demo">DEMO</span> Simulated train markers`
-      : `No live train positions: no verified feed`;
+  $("#map-note").innerHTML = note;
+}
+
+// Train markers for the map, never mixing kinds without saying so.
+function mapTrains() {
+  const now = Date.now();
+  if (state.demo && state.feed) {
+    return { trains: state.feed.positions, note: `<span class="tag demo">DEMO</span> Simulated train markers` };
+  }
+  const liveLines = new Set();
+  const trains = [];
+  // Approaching trains placed back along the line from their live countdowns.
+  for (const [lineId, live] of state.live) {
+    if (!live.data || isStale(live)) continue;
+    liveLines.add(lineId);
+    const seen = new Set();
+    for (const a of live.data.arrivals) {
+      if (a.line !== lineId || seen.has(`${a.towards}|${a.train}`)) continue;
+      seen.add(`${a.towards}|${a.train}`);
+      const p = estimatePosition(model, a, now);
+      if (p && !p.atTerminus) trains.push({ ...p, lineId, kind: "live-est" });
+    }
+    trains.push(...live.data.positions);
+  }
+  const schedLines = state.scheduled ? NETWORK.lines.map((l) => l.id).filter((id) => !liveLines.has(id)) : [];
+  trains.push(...scheduledPositions(model, schedLines, now));
+  const parts = [];
+  if (liveLines.size) parts.push(`<span class="tag live">LIVE</span> estimated from live arrivals (unofficial)`);
+  if (schedLines.length) parts.push(`<span class="tag ttag">SCHEDULED</span> where trains should be if on time`);
+  return { trains, note: parts.join("<br>") || `No train positions shown` };
 }
 
 function locationMessage() {
   switch (state.locStatus) {
     case "asking": return `<p class="muted">Finding your location…</p>`;
-    case "denied": return `<p class="note warn">Location permission is off. Choose a station below, or enable Location for this site in Settings › Privacy › Location Services.</p>`;
+    case "denied": return embedded
+      ? `<p class="note warn">This preview can't use your location. Open the full app in Safari: <a href="${HOSTED_URL}" target="_blank" rel="noopener">${HOSTED_URL.replace("https://", "")}</a>, or choose a station below.</p>`
+      : `<p class="note warn">Location is blocked for this site. In Safari tap <b>aA</b> › Website Settings › Location › Allow, and check Settings › Privacy &amp; Security › Location Services › Safari Websites is set to <i>While Using the App</i>. Or choose a station below.</p>`;
     case "unavailable": return `<p class="note warn">Couldn't get your location right now. Try again outdoors, or choose a station.</p>`;
     case "unsupported": return `<p class="note warn">This browser can't share location. Choose a station instead.</p>`;
     default: return "";
   }
 }
 
+// One-time hint for iPhone/iPad Safari visitors who haven't installed the app.
+function installHint() {
+  if (embedded) {
+    return `<p class="note install">For location and Add to Home Screen, open the full app in Safari: <a href="${HOSTED_URL}" target="_blank" rel="noopener">${HOSTED_URL.replace("https://", "")}</a></p>`;
+  }
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const installed = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  if (!ios || installed || store.get("hideInstall", false)) return "";
+  return `<div class="note install"><img src="icons/icon.svg" alt="" width="36" height="36">
+    <span><b>Install as an app:</b> tap <b>Share</b> ⬆︎ in Safari, then <b>Add to Home Screen</b>.</span>
+    <button class="icon-btn" id="hide-install" aria-label="Hide install tip">✕</button></div>`;
+}
+
 function renderHome() {
-  let html = `
+  let html = `${installHint()}
     <div class="actions">
       <button class="primary" id="use-loc">📍 Use my location</button>
       <button id="pick">Choose station</button>
@@ -259,19 +303,33 @@ function renderLive(live, stationId, destinationId, needMin) {
   return `<ul class="etas">${trains.map((t) => {
     const sec = Math.max(0, Math.round((t.etaAt - now) / 1000));
     return `<li class="${stale ? "is-stale" : ""}"><span class="eta">${sec < 45 ? "Now" : `${Math.round(sec / 60)} min`}</span>
-      ${t.train ? `<small class="muted">train ${esc(t.train)}</small>` : ""}${catchTag(sec, needMin)}</li>`;
+      <small class="muted">${t.destination !== destinationId ? `to ${esc(model.stations.get(t.destination)?.name)} · ` : ""}${t.train ? `train ${esc(t.train)}` : ""}</small>${catchTag(sec, needMin)}</li>`;
   }).join("")}</ul>
     <div class="src">${stale ? `<span class="tag stale">STALE</span>` : `<span class="tag live">LIVE</span>`} ${esc(live.data.source)}</div>`;
 }
 
+function renderScheduled(lineId, stationId, nextId, needMin) {
+  const now = Date.now();
+  const trains = scheduledArrivals(model, lineId, stationId, nextId, now);
+  if (!trains.length) return `<div class="src muted">No more scheduled trains in the next 90 min.</div>`;
+  return `<ul class="etas">${trains.map((t) => {
+    const sec = Math.max(0, Math.round((t.etaAt - now) / 1000));
+    return `<li class="sched"><span class="eta">${sec < 45 ? "Due" : `${Math.round(sec / 60)} min`}</span>
+      <small class="muted">${fmtTime(t.etaAt).slice(0, 5)}</small>${catchTag(sec, needMin)}</li>`;
+  }).join("")}</ul>
+    <div class="src"><span class="tag ttag">SCHEDULED</span> assumes trains run on time</div>`;
+}
+
 function liveStatusLine(live) {
-  if (!live.data) return `<p class="fine">Live source: ${esc(live.source.name)} · ${live.status === "loading" ? "connecting…" : `not reachable (${esc(live.error)})`}</p>`;
+  if (live.status === "idle") return "";
+  if (!live.data) return `<p class="fine">Live source: ${esc(live.source.name)}${live.source.unofficial ? " (unofficial)" : ""} · ${live.status === "loading" ? "connecting…" : `unavailable: ${esc(live.error)}`}</p>`;
   const stale = isStale(live);
   return `<p class="fine live-line">${stale ? `<span class="tag stale">STALE</span>` : `<span class="tag live">LIVE</span>`}
     Source time ${fmtTime(live.data.sourceTime)} · received ${fmtTime(live.data.receivedAt)} · refreshes every ${Math.round((live.source.pollMs || 20000) / 1000)} s
     ${live.error ? ` · <span class="warn-text">last refresh failed (${esc(live.error)}), showing previous data</span>` : ""}
     ${stale ? ` · <span class="warn-text">data is ${Math.round((Date.now() - live.data.sourceTime) / 1000)} s old, countdowns may be wrong</span>` : ""}
-    ${live.source.test ? ` · <b>local test feed</b>` : ""}</p>`;
+    ${live.source.test ? ` · <b>local test feed</b>` : ""}
+    ${live.source.unofficial ? ` · <b>unofficial</b> via <a href="${UNOFFICIAL.site}" target="_blank" rel="noopener">${esc(live.source.name)}</a>, not endorsed by BTS` : ""}</p>`;
 }
 
 function freshnessBadge() {
@@ -310,7 +368,7 @@ function renderStation() {
     const live = state.live.get(lineId);
     const dirs = directionsAt(model, lineId, s.id).map((d) => {
       let body;
-      if (live) {
+      if (live && live.data) {
         body = renderLive(live, s.id, d.terminusId, needMin);
       } else if (state.demo) {
         const etas = (state.feed?.etas.get(d.key) || []).map((e) => Math.max(0, e - elapsed));
@@ -318,8 +376,10 @@ function renderStation() {
           ? `<ul class="etas">${etas.map((e) => `<li class="${stale ? "is-stale" : ""}"><span class="eta">${e < 45 ? "Now" : `${Math.round(e / 60)} min`}</span>${catchTag(e, needMin)}</li>`).join("")}</ul>
              <div class="src"><span class="tag demo">DEMO</span> simulated countdown</div>`
           : `<div class="src muted">No demo data yet.</div>`;
+      } else if (state.scheduled) {
+        body = (live ? renderLive(live, s.id, d.terminusId, needMin) + "<hr class=\"thin\">" : "") + renderScheduled(lineId, s.id, d.next, needMin);
       } else {
-        body = `<div class="src"><span class="tag na">Live arrivals unavailable</span></div>`;
+        body = live ? renderLive(live, s.id, d.terminusId, needMin) : `<div class="src"><span class="tag na">Live arrivals unavailable</span></div>`;
       }
       const term = model.stations.get(d.terminusId);
       return `<div class="dir">
@@ -330,7 +390,7 @@ function renderStation() {
     }).join("");
     const ttBlock = tt.status !== "ok"
       ? `<div class="tt"><span class="tag na">Timetable unavailable</span> ${esc(tt.reason)}</div>`
-      : `<div class="tt"><span class="tag tt">Timetable estimate</span>
+      : `<div class="tt"><span class="tag ttag">Timetable estimate</span>
           ${tt.inService
             ? `Trains about every <b>${formatHeadway(tt.headwayMin)}</b> now (${tt.dayType} timetable, ${esc(tt.periodLabel)}).`
             : `<b>Outside published service hours</b>.`}
@@ -339,7 +399,7 @@ function renderStation() {
           <span class="fine">${tt.verified ? "Operator-published" : "Unverified, secondary source"} · <a href="${esc(tt.source)}" target="_blank" rel="noopener">source</a></span></div>`;
     return `<section class="line-block" style="--c:${line.color}">
         <h3>${lineChip(lineId, code)}</h3>
-        ${live ? liveStatusLine(live) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")}</p>`}
+        ${live ? liveStatusLine(live) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")}${state.scheduled ? " Times below are from the timetable." : ""}</p>`}
         <div class="dirs">${dirs}</div>
         ${ttBlock}
       </section>`;
@@ -396,6 +456,8 @@ function openStation(id) {
   map.highlight([id]);
   if (s.lat != null) map.focusOn(state.location ? [s, state.location] : [s]);
   refreshFeed();
+  // Per-station live sources fetch the newly opened station straight away.
+  for (const p of polls) if (p.source.load) p.refresh({ reset: true });
   render();
   $("#panel").scrollTop = 0;
 }
@@ -436,6 +498,7 @@ $("#panel").addEventListener("click", (e) => {
   const go = e.target.closest("[data-go]");
   if (go) { state.view = go.dataset.go; render(); return; }
   if (e.target.closest("#use-loc")) return requestLocation();
+  if (e.target.closest("#hide-install")) { store.set("hideInstall", true); render(); return; }
   if (e.target.closest("#pick")) { state.view = "pick"; render(); }
 });
 $("#panel").addEventListener("input", (e) => {
@@ -464,6 +527,21 @@ demoToggle.onchange = () => {
   refreshFeed();
   render();
 };
+const unofficialToggle = $("#unofficial-toggle");
+unofficialToggle.checked = state.unofficial;
+unofficialToggle.onchange = () => {
+  state.unofficial = unofficialToggle.checked;
+  store.set("unofficial", state.unofficial);
+  setupLive();
+  render();
+};
+const scheduledToggle = $("#scheduled-toggle");
+scheduledToggle.checked = state.scheduled;
+scheduledToggle.onchange = () => {
+  state.scheduled = scheduledToggle.checked;
+  store.set("scheduled", state.scheduled);
+  render();
+};
 $("#sim-stale").onchange = (e) => { state.simStale = e.target.checked; refreshFeed(); render(); };
 $("#sim-offline").onchange = (e) => { state.simOffline = e.target.checked; refreshFeed(); render(); };
 
@@ -473,18 +551,30 @@ $("#coverage").innerHTML = `<div class="table-wrap"><table>
   </table></div><p class="fine">${esc(COVERAGE.note)}</p>`;
 $("#data-src").innerHTML = `Stations: <a href="https://www.wikidata.org" target="_blank" rel="noopener">Wikidata</a> (CC0), snapshot ${esc(NETWORK.source.retrieved)}; some coordinates from the OTP Namtang GTFS (สนข./OTP, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY 4.0</a>). Track alignment, Chao Phraya River (centreline) and Lumphini Park: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>, ODbL. Headways and hours: operator publications (BTS/EBM, BEM, SRTET).`;
 
-// Live sources (none configured in production; see live.js).
-for (const source of liveSources) {
-  const poll = startPolling(source, model, () => render(), { isOffline });
-  for (const lineId of source.lines) state.live.set(lineId, poll.state);
-  window.addEventListener("online", () => poll.refresh());
+// Live sources: none official; the unofficial one only when switched on.
+let polls = [];
+function setupLive() {
+  for (const p of polls) p.stop();
+  polls = [];
+  state.live.clear();
+  const sources = [...sourcesFor()];
+  if (state.unofficial) sources.push(createUnofficialSource(model, () => (state.view === "station" ? state.stationId : null)));
+  for (const source of sources) {
+    const poll = startPolling(source, model, () => render(), { isOffline });
+    poll.source = source;
+    polls.push(poll);
+    for (const lineId of source.lines) state.live.set(lineId, poll.state);
+  }
 }
+window.addEventListener("online", () => polls.forEach((p) => p.refresh()));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) polls.forEach((p) => p.refresh()); });
+setupLive();
 
 // Ticks: re-render countdowns every second, refresh the (demo) feed every 15 s.
 setInterval(() => {
   // Don't rebuild the panel while someone is typing a search.
   if (document.activeElement?.matches?.("#pick-q, #route-q")) return;
-  if (state.view === "station" || state.demo || state.live.size) render();
+  if (state.view === "station" || state.demo || state.live.size || state.scheduled) render();
 }, 1000);
 setInterval(() => { refreshFeed(); }, 15000);
 

@@ -44,6 +44,36 @@ export function buildGraph(model) {
   return adj;
 }
 
+// Track between two adjacent stations, ordered a -> b, with ride minutes.
+export function segment(model, lineId, a, b) {
+  const line = model.lines.get(lineId);
+  let pts = line.geometry?.[`${a}|${b}`];
+  if (!pts && line.geometry?.[`${b}|${a}`]) pts = [...line.geometry[`${b}|${a}`]].reverse();
+  if (!pts) {
+    const sa = model.stations.get(a);
+    const sb = model.stations.get(b);
+    pts = [[sa.lat, sa.lon], [sb.lat, sb.lon]];
+  }
+  return { pts, minutes: pathLength(pts) / RIDE_M_PER_MIN + DWELL_MIN };
+}
+
+// Point a fraction f (0..1) of the way along a polyline.
+export function pointAlong(pts, f) {
+  const total = pathLength(pts);
+  let target = total * Math.min(Math.max(f, 0), 1);
+  for (let i = 1; i < pts.length; i++) {
+    const a = { lat: pts[i - 1][0], lon: pts[i - 1][1] };
+    const b = { lat: pts[i][0], lon: pts[i][1] };
+    const d = distanceM(a, b);
+    if (target <= d || i === pts.length - 1) {
+      const t = d ? Math.min(target / d, 1) : 0;
+      return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t };
+    }
+    target -= d;
+  }
+  return { lat: pts[0][0], lon: pts[0][1] };
+}
+
 function pathLength(pts) {
   let m = 0;
   for (let i = 1; i < pts.length; i++) {

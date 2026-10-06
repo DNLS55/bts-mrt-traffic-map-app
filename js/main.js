@@ -1,7 +1,8 @@
 import { NETWORK } from "../data/network.js";
+import { PLACES } from "../data/places.js";
 import { buildModel, directionsAt } from "./model.js";
 import { nearestStations, walkMinutes, distanceM, formatDistance, WALK } from "./geo.js";
-import { createMap } from "./map.js";
+import { createMap, PLACE_COLORS } from "./map.js";
 import { STALE_AFTER_MS, createDemoFeed, timetableFor, formatHeadway } from "./feeds.js";
 import { COVERAGE, LIVE_REASON } from "./coverage.js";
 import { sourcesFor, startPolling, isStale, nextTrains } from "./live.js";
@@ -20,7 +21,9 @@ const store = {
 };
 
 const state = {
-  view: "home", // home | station | pick | route
+  view: "home", // home | station | pick | route | places | place
+  placeRank: null,
+  placeQuery: "",
   route: { from: null, to: null, q: "" },
   stationId: null,
   pickQuery: "",
@@ -40,7 +43,8 @@ const COPYRIGHT_HTML = `<p class="copyright">© 2026 Professor Daniel Schlagwein
 const embedded = (() => { try { return window.top !== window.self; } catch { return true; } })();
 
 const demoFeed = createDemoFeed(model);
-const map = createMap($("#map"), model, { onStationTap: openStation });
+const placeByRank = new Map(PLACES.places.map((p) => [p.rank, p]));
+const map = createMap($("#map"), model, { onStationTap: openStation, places: PLACES.places, onPlaceTap: openPlace });
 
 // ---------------- location (device only) ----------------
 let watchId = null;
@@ -199,6 +203,7 @@ function renderHome() {
     <div class="actions">
       <button class="primary" id="use-loc">📍 Use my location</button>
       <button id="pick">Choose station</button>
+      <button id="places-btn" class="wide">🗺️ Bangkok top 100 places</button>
     </div>
     ${locationMessage()}`;
   if (state.location) {
@@ -218,6 +223,64 @@ function renderHome() {
     html += `<p class="muted intro">Find stations near you, then tap one to see trains in both directions.</p>`;
   }
   return html + COPYRIGHT_HTML;
+}
+
+function nearestToPlace(pl, n = 3) {
+  return nearestStations(pl, NETWORK.stations, n);
+}
+
+function placeBadge(pl, size = 40) {
+  return `<span class="pl-badge" style="--pc:${PLACE_COLORS[pl.category] || "#4a5568"};--sz:${size}px"><span>${pl.emoji}</span><b>${pl.rank}</b></span>`;
+}
+
+function renderPlaces() {
+  const q = state.placeQuery.trim().toLowerCase();
+  const list = PLACES.places.filter((p) => !q || `${p.name} ${p.note} ${p.category}`.toLowerCase().includes(q));
+  return `
+    <div class="panel-head"><button class="back" data-go="home">‹ Back</button><h2>Bangkok top 100</h2></div>
+    <input id="place-q" class="search" type="search" placeholder="Search places (e.g. temple, rooftop, market)" value="${esc(state.placeQuery)}" autocomplete="off">
+    <ul class="list">${list.map((p) => {
+      const near = nearestToPlace(p, 1)[0];
+      return `<li><button class="row" data-place="${p.rank}">
+        <span class="pl-row">${placeBadge(p, 38)}<span class="row-main"><span class="name">${esc(p.name)}</span><small class="muted">${esc(p.note)}</small></span></span>
+        <span class="walk"><small>${esc(near.station.name)}</small><br><b>${near.walkMin} min</b> walk</span>
+      </button></li>`;
+    }).join("") || `<li class="muted">No place matches “${esc(state.placeQuery)}”.</li>`}</ul>
+    <p class="fine">Places: merged top-100 list. Locations and outlines: © OpenStreetMap contributors (ODbL), via Nominatim.</p>`;
+}
+
+function renderPlace() {
+  const pl = placeByRank.get(state.placeRank);
+  const near = nearestToPlace(pl, 3);
+  const mine = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0] : null;
+  const kind = pl.areas ? "Outlined area on the map" : pl.lines ? "Highlighted street on the map" : pl.spots ? `${pl.spots.length} places` : "Point on the map";
+  return `
+    <div class="panel-head"><button class="back" data-go="places">‹ Top 100</button></div>
+    <div class="place-hero">${placeBadge(pl, 64)}<div><h2>${esc(pl.name)}</h2><div class="muted">#${pl.rank} · ${esc(pl.category)}</div></div></div>
+    ${pl.note ? `<p>${esc(pl.note)}</p>` : ""}
+    ${pl.spots ? `<ul class="list">${pl.spots.map((sp) => `<li class="spot">${esc(sp.label)} <small class="muted">${esc(sp.found || "")}</small></li>`).join("")}</ul>` : ""}
+    <p class="fine">${kind}${pl.approx ? " · position approximate" : ""}.</p>
+    <h3 class="section-h">Nearest stations</h3>
+    <ul class="list">${near.map((n) => `<li><button class="row" data-station="${esc(n.station.id)}">
+      <span class="row-main"><span class="name">${esc(n.station.name)}</span><span class="lines">${stationLines(n.station)}</span></span>
+      <span class="walk"><b>${n.walkMin} min</b> walk<br><small>${formatDistance(n.meters)}</small></span></button></li>`).join("")}</ul>
+    <div class="actions">
+      <button class="primary" data-route-to-place="${pl.rank}">${mine ? `Route from ${esc(mine.station.name)}` : "Plan a route here"}</button>
+      <a class="btn-link" href="https://maps.apple.com/?q=${encodeURIComponent(pl.name)}&ll=${pl.lat},${pl.lon}" target="_blank" rel="noopener">Open in Maps</a>
+    </div>`;
+}
+
+function openPlace(rank) {
+  const pl = placeByRank.get(rank);
+  if (!pl) return;
+  state.placeRank = rank;
+  state.view = "place";
+  map.selectPlace(rank);
+  const near = nearestToPlace(pl, 1)[0];
+  map.highlight([near.station.id]);
+  map.focusOn([pl, near.station], 1200);
+  render();
+  $("#panel").scrollTop = 0;
 }
 
 function renderPicker() {
@@ -437,11 +500,14 @@ function render() {
   renderChrome();
   const panel = $("#panel");
   const focused = document.activeElement?.id;
-  if (state.view === "route") panel.innerHTML = renderRoute();
+  if (state.view !== "place") map.selectPlace(null);
+  if (state.view === "places") panel.innerHTML = renderPlaces();
+  else if (state.view === "place" && state.placeRank) panel.innerHTML = renderPlace();
+  else if (state.view === "route") panel.innerHTML = renderRoute();
   else if (state.view === "station" && state.stationId) panel.innerHTML = renderStation();
   else if (state.view === "pick") panel.innerHTML = renderPicker();
   else panel.innerHTML = renderHome();
-  if (focused === "pick-q" || focused === "route-q") {
+  if (focused === "pick-q" || focused === "route-q" || focused === "place-q") {
     const q = $("#" + focused);
     if (q) {
       q.focus();
@@ -501,10 +567,24 @@ $("#panel").addEventListener("click", (e) => {
   if (e.target.closest("#use-loc")) return requestLocation();
   if (e.target.closest("#hide-install")) { store.set("hideInstall", true); render(); return; }
   if (e.target.closest("#pick")) { state.view = "pick"; render(); }
+  if (e.target.closest("#places-btn")) { state.view = "places"; render(); return; }
+  const pr = e.target.closest("[data-place]");
+  if (pr) { openPlace(Number(pr.dataset.place)); return; }
+  const rp = e.target.closest("[data-route-to-place]");
+  if (rp) {
+    const pl = placeByRank.get(Number(rp.dataset.routeToPlace));
+    state.route.to = nearestToPlace(pl, 1)[0].station.id;
+    state.route.from = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0].station.id : null;
+    state.route.q = "";
+    state.view = "route";
+    showRouteOnMap();
+    render();
+  }
 });
 $("#panel").addEventListener("input", (e) => {
   if (e.target.id === "pick-q") { state.pickQuery = e.target.value; render(); }
   if (e.target.id === "route-q") { state.route.q = e.target.value; render(); }
+  if (e.target.id === "place-q") { state.placeQuery = e.target.value; render(); }
 });
 $("#zoom-in").onclick = () => map.zoomIn();
 $("#zoom-out").onclick = () => map.zoomOut();
@@ -575,7 +655,8 @@ setupLive();
 // Ticks: re-render countdowns every second, refresh the (demo) feed every 15 s.
 setInterval(() => {
   // Don't rebuild the panel while someone is typing a search.
-  if (document.activeElement?.matches?.("#pick-q, #route-q")) return;
+  if (document.activeElement?.matches?.("#pick-q, #route-q, #place-q")) return;
+  if (state.view === "places") return; // static list; keeps scroll position
   if (state.view === "station" || state.demo || state.live.size || state.scheduled) render();
 }, 1000);
 setInterval(() => { refreshFeed(); }, 15000);

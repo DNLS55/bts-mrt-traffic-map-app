@@ -23,18 +23,27 @@ const pathD = (pts) => pts.map(([lat, lon], i) => {
   return `${i ? "L" : "M"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
 }).join("");
 
-export function createMap(container, model, { onStationTap }) {
+// Category colours for place badges and outlines.
+export const PLACE_COLORS = {
+  temple: "#d39b0b", market: "#e67e22", nightlife: "#8e44ad", food: "#e4572e", park: "#2e9d4f",
+  mall: "#e2336f", culture: "#138a8a", neighbourhood: "#2f6fd6", river: "#1b8fd0", view: "#5b4bd6",
+  landmark: "#4a5568", wellness: "#c06c84",
+};
+
+export function createMap(container, model, { onStationTap, places = [], onPlaceTap = () => {} }) {
   const net = model.network;
   const svg = el("svg", { class: "net-map", role: "img", "aria-label": "Map of BTS, MRT, Airport Rail Link and SRT Red Line stations" });
   container.appendChild(svg);
   const root = el("g", {}, svg);
   const landG = el("g", { class: "land" }, root);
+  const placeShapesG = el("g", { class: "place-shapes" }, root);
   const linesG = el("g", { class: "lines" }, root);
   const xferG = el("g", { class: "xfers" }, root);
   const stationsG = el("g", { class: "stations" }, root);
   const meG = el("g", { class: "me" }, root);
   // Screen-space layers: trains, text and furniture keep their size at any zoom.
   const trainsG = el("g", { class: "trains" }, svg);
+  const placesG = el("g", { class: "places" }, svg);
   const labelsG = el("g", { class: "labels" }, svg);
   const furnG = el("g", { class: "furniture" }, svg);
 
@@ -119,6 +128,31 @@ export function createMap(container, model, { onStationTap }) {
     landLabels.push(l);
   }
 
+  // ---- top-100 places: outlines for areas, highlighted streets, emoji badges ----
+  const landmarkOsm = new Set((net.landmarks?.parks || []).map((p) => p.osm));
+  const badges = []; // { g, _p, rank, id }
+  for (const pl of places) {
+    const color = PLACE_COLORS[pl.category] || "#4a5568";
+    if (!landmarkOsm.has(pl.osm)) {
+      for (const ring of pl.areas || []) el("path", { d: pathD(ring) + "Z", class: "place-area", style: `--pc:${color}` }, placeShapesG);
+    }
+    for (const line of pl.lines || []) el("path", { d: pathD(line), class: "place-street", style: `--pc:${color}` }, placeShapesG);
+    const spots = pl.spots || [{ lat: pl.lat, lon: pl.lon, label: null }];
+    for (const [i, spot] of spots.entries()) {
+      const g = el("g", { class: "place", tabindex: "0", role: "button", "aria-label": `${pl.rank}. ${pl.name}${spot.label ? `: ${spot.label}` : ""}`, style: `--pc:${color}` }, placesG);
+      el("circle", { r: 13, class: "pl-bg" }, g);
+      el("text", { y: 5.2, class: "pl-emoji", "text-anchor": "middle" }, g).textContent = pl.emoji;
+      const tag = el("g", { class: "pl-rank", transform: "translate(10 -10)" }, g);
+      el("circle", { r: pl.rank >= 100 ? 7.5 : 6.5 }, tag);
+      el("text", { y: 2.6, "text-anchor": "middle" }, tag).textContent = String(pl.rank);
+      const tap = () => onPlaceTap(pl.rank);
+      g.addEventListener("click", tap);
+      g.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && tap());
+      badges.push({ g, _p: project(spot.lat, spot.lon), rank: pl.rank, id: `${pl.rank}|${i}` });
+    }
+  }
+  let selectedPlace = null;
+
   const pts = net.stations.filter((s) => s.lat != null).map((s) => project(s.lat, s.lon));
   const bounds = {
     minX: Math.min(...pts.map((p) => p.x)), maxX: Math.max(...pts.map((p) => p.x)),
@@ -155,11 +189,26 @@ export function createMap(container, model, { onStationTap }) {
       })),
       ...xferLabels.map((label) => ({ label, prio: label._ends.some((id) => highlighted.has(id)) && view.s > 3 ? 0.2 : view.s > 5 ? 1 : 9 })),
       ...landLabels.map((label) => ({ label, prio: view.s >= (label._minZoom || 0) ? label._prio : 9 })),
+      ...badges.map((b) => ({
+        label: b, badge: true,
+        prio: b.rank === selectedPlace ? 0 : b.rank <= 10 ? 0.4 : b.rank <= 30 ? 1.6 : b.rank <= 60 ? 2.6 : 3.6,
+      })),
     ].sort((a, b) => a.prio - b.prio);
     const maxPrio = view.s > 14 ? 4 : view.s > 6 ? 3 : view.s > 3 ? 2 : 0.5;
-    for (const { label, prio, station } of all) {
+    for (const { label, prio, station, badge } of all) {
       const x = label._p.x * view.s + view.x;
       const y = label._p.y * view.s + view.y;
+      if (badge) {
+        const b = { x1: x - 14, x2: x + 17, y1: y - 18, y2: y + 14 };
+        const show = prio <= maxPrio && fits(b) && !overlaps(b);
+        label.g.style.display = show ? "" : "none";
+        if (show) {
+          label.g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+          label.g.classList.toggle("sel", label.rank === selectedPlace);
+          boxes.push(b);
+        }
+        continue;
+      }
       const width = label.textContent.length * (station ? 6.2 : 5.6) + 4;
       // Candidate placements: stations right, left, above, below; others centred.
       const cands = station
@@ -293,17 +342,26 @@ export function createMap(container, model, { onStationTap }) {
   function makeTrain(t) {
     const color = model.lines.get(t.lineId).color;
     const g = el("g", { class: `train ${t.kind}` }, trainsG);
+    // Passengers walking between the platform (below) and the doors.
     const pax = el("g", { class: "pax", "aria-hidden": "true" }, g);
-    for (const [x, side, delay] of [[-16, -1, 0], [-11, 1, 0.35], [-4, -1, 0.7], [1, 1, 1.05], [-8, -1, 1.2]]) {
-      el("circle", { cx: x, cy: 0, r: 1.3, class: `p ${side < 0 ? "up" : "down"}`, style: `animation-delay:${delay}s` }, pax);
+    for (const [x, dir, delay] of [[-13, "up", 0], [-8, "down", 0.35], [-3, "up", 0.7], [4, "down", 1.05], [9, "up", 0.5]]) {
+      el("circle", { cx: x, cy: 4, r: 1.4, class: `p ${dir}`, style: `animation-delay:${delay}s` }, pax);
     }
-    // Rear car, then the leading car with the nose.
-    el("rect", { x: -22, y: -3.4, width: 12, height: 6.8, rx: 2, fill: color, class: "car" }, g);
-    el("rect", { x: -20.5, y: -1.3, width: 9, height: 2.6, rx: 1, class: "win" }, g);
-    el("rect", { x: -9, y: -3.4, width: 15, height: 6.8, rx: 2.2, fill: color, class: "car" }, g);
-    el("path", { d: "M5.5 -3.4 Q 11 -3.4 11 0 Q 11 3.4 5.5 3.4 Z", fill: color, class: "car" }, g);
-    el("rect", { x: -7.2, y: -1.3, width: 10.5, height: 2.6, rx: 1, class: "win" }, g);
-    el("path", { d: "M7 -2.4 Q 9.6 -2 9.6 0 Q 9.6 2 7 2.4 Z", class: "screen" }, g);
+    // Zoomed out: just a small dot in the line colour.
+    el("circle", { r: 3.2, fill: color, class: "mini" }, g);
+    // Side view, pointing +x: rear car, gangway, leading car with a rounded nose.
+    const body = el("g", { class: "body" }, g);
+    el("rect", { x: -17, y: -6, width: 15, height: 11, rx: 3, class: "shell" }, body);
+    el("rect", { x: -2.4, y: -3, width: 1.6, height: 6, class: "gangway" }, body);
+    el("path", { d: "M1 -6 H10 Q16.6 -6 17 0 L17 3.4 Q17 5 15.4 5 H1 Q-1 5 -1 3 V-4 Q-1 -6 1 -6 Z", class: "shell" }, body);
+    // Line-colour stripe along both cars (BTS trains also get their dark band).
+    el("path", { d: "M-17 1.2 H-2 V3.4 H-17 Z M-1 1.2 H17 V3.4 H-1 Z", fill: color, class: "stripe" }, body);
+    if (t.lineId.startsWith("BTS-")) el("path", { d: "M-17 0.2 H-2 V0.9 H-17 Z M-1 0.2 H17 V0.9 H-1 Z", class: "band" }, body);
+    for (const x of [-15.3, -10.9, -6.5, 1, 5.2]) el("rect", { x, y: -4.3, width: 3.3, height: 3.1, rx: 0.9, class: "window" }, body);
+    el("path", { d: "M10.6 -5.2 Q15.9 -5.1 16.5 -0.4 H10.6 Z", class: "windscreen" }, body);
+    el("path", { d: "M11.6 -4.3 Q13.6 -4.2 14.4 -2.6", class: "shine" }, body);
+    el("circle", { cx: 15.6, cy: 4.1, r: 0.95, class: "headlight" }, body);
+    for (const x of [-14, -5.2, 2.4, 12.6]) el("circle", { cx: x, cy: 5.6, r: 1.7, class: "wheel" }, body);
     return g;
   }
   function setTrains(trains) {
@@ -328,14 +386,22 @@ export function createMap(container, model, { onStationTap }) {
   function placeTrains() {
     const w = svg.clientWidth || 360;
     const h = svg.clientHeight || 360;
-    const k = Math.min(Math.max(0.5 + view.s / 24, 0.55), 1.5);
+    const k = Math.min(Math.max(0.45 + view.s / 26, 0.5), 1.35);
     for (const rec of trainEls.values()) {
       const x = rec.p.x * view.s + view.x;
       const y = rec.p.y * view.s + view.y;
       const off = x < -20 || y < -20 || x > w + 20 || y > h + 20;
       rec.g.style.display = off ? "none" : "";
-      if (!off) rec.g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${(rec.angle || 0).toFixed(1)}) scale(${k.toFixed(2)})`);
+      // Heading left: mirror instead of turning the train upside down.
+      const a = rec.angle || 0;
+      const flip = Math.abs(((a + 540) % 360) - 180) > 90 ? -1 : 1;
+      if (!off) rec.g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${a.toFixed(1)}) scale(${k.toFixed(2)} ${(flip * k).toFixed(2)})`);
     }
+  }
+
+  function selectPlace(rank) {
+    selectedPlace = rank;
+    apply();
   }
 
   function highlight(ids) {
@@ -369,7 +435,7 @@ export function createMap(container, model, { onStationTap }) {
   window.addEventListener("resize", () => apply());
 
   return {
-    setMe, setTrains, highlight, focusOn,
+    setMe, setTrains, highlight, focusOn, selectPlace,
     fitAll: () => fit(),
     zoomIn: () => zoomAt(1.5, svg.clientWidth / 2, svg.clientHeight / 2),
     zoomOut: () => zoomAt(1 / 1.5, svg.clientWidth / 2, svg.clientHeight / 2),

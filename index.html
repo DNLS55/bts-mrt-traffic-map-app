@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>BTS/MRT Traffic Map</title>
+  <meta name="description" content="Bangkok BTS and MRT stations near you, with arrivals where verified data exists.">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BKK Rail">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>BTS/MRT Traffic Map</h1>
+    <div class="chips">
+      <span id="net-chip" class="chip" role="status"></span>
+      <button id="settings-btn" class="icon-btn" aria-label="Settings and data sources">⋯</button>
+    </div>
+  </header>
+  <div id="demo-banner" class="demo-banner" hidden>DEMO MODE · simulated trains, not real service</div>
+  <div id="offline-banner" class="warn-banner" hidden></div>
+
+  <main>
+    <section class="map-wrap" aria-label="Network map">
+      <div id="map"></div>
+      <div class="map-ctrls">
+        <button id="zoom-in" class="icon-btn" aria-label="Zoom in">+</button>
+        <button id="zoom-out" class="icon-btn" aria-label="Zoom out">−</button>
+        <button id="zoom-fit" class="icon-btn" aria-label="Show whole network">⤢</button>
+      </div>
+      <div id="map-note" class="map-note"></div>
+      <div class="map-attr">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · Wikidata</div>
+    </section>
+
+    <section id="panel" class="panel" aria-live="polite"></section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="sheet">
+      <header class="sheet-head"><h2>Settings &amp; data</h2><button class="icon-btn" aria-label="Close">✕</button></header>
+      <label class="toggle"><input type="checkbox" id="demo-toggle"> Demo mode <small>(simulated trains, clearly labelled)</small></label>
+      <fieldset id="demo-tests" disabled>
+        <legend>Demo test switches</legend>
+        <label class="toggle"><input type="checkbox" id="sim-stale"> Simulate a stale feed</label>
+        <label class="toggle"><input type="checkbox" id="sim-offline"> Simulate losing connection</label>
+      </fieldset>
+      <h3>Data coverage</h3>
+      <div id="coverage"></div>
+      <p class="fine">Your location is used only on this device to find nearby stations. The map is drawn locally; no map tiles or location data are sent to any server.</p>
+      <p class="fine" id="data-src"></p>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

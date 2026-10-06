@@ -3,7 +3,8 @@
 // headways are NOT added (the result says "in-train + transfer time").
 
 import { distanceM } from "./geo.js";
-import { towardsFor } from "./model.js";
+import { towardsFor, codeOn } from "./model.js";
+import { RUNTIMES } from "../data/runtimes.js";
 
 // Train motion between stations: accelerate, cruise at the line's top speed,
 // brake into the next station, then stand for the dwell time.
@@ -14,6 +15,15 @@ const TOP_SPEED = { // m/s
   "MRT-YL": 22, ARL: 44, "SRT-DR": 33, "SRT-LR": 33,
 };
 export const DWELL_MIN = 0.5;
+
+// Real trains take longer than the ideal run: slower approaches to the
+// platform, speed limits and signalling margins. Where we have measured the
+// station-to-station time (app/data/runtimes.js, from live predictions) that
+// is used; elsewhere the ideal run is stretched by a factor fitted to the
+// measurements.
+// Fitted 2026-10-06 on 114 measured BTS pairs: run = 1.17 x ideal.
+const STRETCH = 1.17;
+const EXTRA_S = 0;
 
 // Run between two stations of length `meters`: total seconds and distance
 // covered after t seconds (trapezoid, or triangle when stations are close).
@@ -57,13 +67,8 @@ export function buildGraph(model) {
   };
   for (const line of model.network.lines) {
     for (const [a, b] of line.edges) {
-      const sa = model.stations.get(a);
-      const sb = model.stations.get(b);
-      const geom = line.geometry?.[`${a}|${b}`] || line.geometry?.[`${b}|${a}`];
-      const meters = geom ? pathLength(geom) : distanceM(sa, sb) * 1.15;
-      const minutes = runProfile(line.id, meters).seconds / 60 + DWELL_MIN;
-      add(node(a, line.id), node(b, line.id), { kind: "ride", line: line.id, minutes });
-      add(node(b, line.id), node(a, line.id), { kind: "ride", line: line.id, minutes });
+      add(node(a, line.id), node(b, line.id), { kind: "ride", line: line.id, minutes: segment(model, line.id, a, b).minutes });
+      add(node(b, line.id), node(a, line.id), { kind: "ride", line: line.id, minutes: segment(model, line.id, b, a).minutes });
     }
   }
   for (const ix of model.network.interchanges) {
@@ -84,22 +89,44 @@ export function buildGraph(model) {
 }
 
 // Track between two adjacent stations, ordered a -> b, with ride minutes.
+const segCache = new WeakMap();
 export function segment(model, lineId, a, b) {
+  let cache = segCache.get(model);
+  if (!cache) segCache.set(model, (cache = new Map()));
+  const key = `${lineId}|${a}|${b}`;
+  if (!cache.has(key)) cache.set(key, makeSegment(model, lineId, a, b));
+  return cache.get(key);
+}
+
+function makeSegment(model, lineId, a, b) {
   const line = model.lines.get(lineId);
+  const sa = model.stations.get(a);
+  const sb = model.stations.get(b);
   let pts = line.geometry?.[`${a}|${b}`];
   if (!pts && line.geometry?.[`${b}|${a}`]) pts = [...line.geometry[`${b}|${a}`]].reverse();
-  if (!pts) {
-    const sa = model.stations.get(a);
-    const sb = model.stations.get(b);
-    pts = [[sa.lat, sa.lon], [sb.lat, sb.lon]];
-  }
+  if (!pts) pts = [[sa.lat, sa.lon], [sb.lat, sb.lon]];
   const meters = pathLength(pts);
   const run = runProfile(lineId, meters);
-  const runMinutes = run.seconds / 60;
+  const stretched = Math.max(run.seconds, run.seconds * STRETCH + EXTRA_S);
+  let runSeconds = stretched;
+  let dwellSeconds = DWELL_MIN * 60;
+  // Measured: arrival at a -> arrival at b, so it includes the stop at a. Time
+  // beyond the ideal run plus a normal stop is split between a longer stop
+  // (busy stations like Siam) and a slower run.
+  const [measured, samples] = RUNTIMES.lines[lineId]?.[`${codeOn(sa, lineId)}>${codeOn(sb, lineId)}`] || [];
+  if (measured) {
+    const total = samples >= 2 ? measured : (measured + stretched + dwellSeconds) / 2; // one sample: meet halfway
+    dwellSeconds += Math.max(0, total - run.seconds - dwellSeconds) / 2;
+    runSeconds = Math.max(run.seconds, total - dwellSeconds);
+  }
+  const scale = run.seconds / runSeconds; // same accelerate-cruise-brake shape, driven slower
+  const runMinutes = runSeconds / 60;
+  const dwellMinutes = dwellSeconds / 60;
   return {
-    pts, meters, runMinutes, minutes: runMinutes + DWELL_MIN,
+    // dwellMinutes: the stop at a before this run; minutes: stop + run.
+    pts, meters, runMinutes, dwellMinutes, minutes: runMinutes + dwellMinutes, measured: Boolean(measured),
     // Fraction of the distance covered `m` minutes after leaving station a.
-    fractionAt: (m) => (meters ? run.at(m * 60) / meters : 1),
+    fractionAt: (m) => (meters ? run.at(m * 60 * scale) / meters : 1),
   };
 }
 

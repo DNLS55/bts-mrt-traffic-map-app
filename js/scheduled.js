@@ -117,27 +117,24 @@ export function scheduledArrivals(model, lineId, stationId, nextId, now = Date.n
 }
 
 // Where every scheduled train would be right now if all ran on time.
-// `shift(lineId, towardsId)` may return minutes to move a pattern later
-// (positive = running late), used to line the timetable up with live data;
-// `skip(trip, etaAt)` may drop trips already shown from live data.
-export function scheduledPositions(model, lineIds, now = Date.now(), { shift = () => 0, skip = () => false } = {}) {
+// `skip(trip, k)` may drop a trip that is on segment k (stops[k] -> stops[k+1])
+// because live data already covers that stretch.
+export function scheduledPositions(model, lineIds, now = Date.now(), { skip = () => false } = {}) {
   const out = [];
   for (const lineId of lineIds) {
     for (const trip of tripsFor(model, lineId, now)) {
-      const towards = trip.stops[trip.stops.length - 1];
-      const late = shift(lineId, towards) || 0;
-      const elapsed = (now - trip.dep) / 60000 - late;
+      const elapsed = (now - trip.dep) / 60000;
       const total = trip.cum[trip.cum.length - 1];
       if (elapsed < 0 || elapsed > total) continue;
-      if (skip(trip, late)) continue;
       let k = 0;
       while (k < trip.segs.length - 1 && trip.cum[k + 1] <= elapsed) k++;
+      if (skip(trip, k)) continue;
       const seg = trip.segs[k];
       // Each segment: run (accelerate, cruise, brake), then the dwell at the next station.
       const t = elapsed - trip.cum[k];
       const dwell = t >= seg.runMinutes;
       const p = pointAndAhead(seg.pts, dwell ? 1 : seg.fractionAt(t));
-      out.push({ ...p, lineId, kind: late ? "live-sched" : "scheduled", dwell, id: `s|${lineId}|${trip.stops[0]}|${trip.dep}` });
+      out.push({ ...p, lineId, kind: "scheduled", dwell, id: `s|${lineId}|${trip.stops[0]}|${trip.dep}` });
     }
   }
   return out;

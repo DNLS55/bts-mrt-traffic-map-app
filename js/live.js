@@ -64,8 +64,10 @@ export function startPolling(source, model, onUpdate, { fetchImpl = fetch, isOff
   const state = { source, status: "loading", data: null, error: null, lastOk: null, lastTry: null };
   let timer = 0;
   let stopped = false;
+  let busy = false;
   async function tick() {
-    if (stopped) return;
+    if (stopped || busy) return; // a running tick schedules the next one itself
+    busy = true;
     if (isOffline()) {
       state.status = state.data ? "ok" : "error";
       state.error = "offline";
@@ -97,8 +99,10 @@ export function startPolling(source, model, onUpdate, { fetchImpl = fetch, isOff
         state.error = e.name === "AbortError" ? "timed out" : e.message;
       }
     }
+    busy = false;
     onUpdate(state);
-    if (!stopped) timer = setTimeout(tick, source.pollMs || 20000);
+    clearTimeout(timer);
+    if (!stopped) timer = setTimeout(tick, source.nextDelay?.() ?? source.pollMs ?? 20000);
   }
   tick();
   return {

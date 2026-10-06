@@ -7,9 +7,9 @@ import { nearestStations, walkMinutes, distanceM, formatDistance, WALK } from ".
 import { createMap, PLACE_COLORS } from "./map.js";
 import { STALE_AFTER_MS, createDemoFeed, timetableFor, formatHeadway } from "./feeds.js";
 import { COVERAGE, LIVE_REASON } from "./coverage.js";
-import { sourcesFor, startPolling, isStale, nextTrains } from "./live.js";
-import { createUnofficialSource, estimatePosition, UNOFFICIAL } from "./unofficial.js";
-import { scheduledArrivals, scheduledPositions, scheduledEtasAt } from "./scheduled.js";
+import { sourcesFor, startPolling, isStale, nextTrains, LIVE_STALE_MS } from "./live.js";
+import { createUnofficialSource, trackTrains, coveredBy, UNOFFICIAL, EVERY_MS } from "./unofficial.js";
+import { scheduledArrivals, scheduledPositions } from "./scheduled.js";
 import { buildGraph, planRoute } from "./route.js";
 
 const model = buildModel(NETWORK);
@@ -148,41 +148,33 @@ function renderChrome() {
   $("#map-note").innerHTML = note;
 }
 
-// Train markers for the map, never mixing kinds without saying so.
-// How far live trains run from the timetable, per line and direction, judged
-// from the live arrivals at the open station. Used to shift the timetable so
-// the rest of that line follows the live timing.
-function liveTiming(now) {
-  const out = new Map(); // `${line}|${towards}` -> { late, station, next, horizon }
-  for (const [lineId, live] of state.live) {
-    if (!live.data || isStale(live)) continue;
-    const byDir = new Map();
-    for (const a of live.data.arrivals) {
-      if (a.line !== lineId || a.etaAt < now - 30000) continue;
-      if (!byDir.has(a.towards)) byDir.set(a.towards, []);
-      byDir.get(a.towards).push(a);
-    }
-    for (const [towards, list] of byDir) {
-      const station = list[0].station;
-      const dir = directionsAt(model, lineId, station).find((d) => d.terminusId === towards);
-      if (!dir) continue;
-      const first = Math.min(...list.map((a) => a.etaAt));
-      const sched = scheduledEtasAt(model, lineId, station, dir.next, first - 30 * 60000, first + 30 * 60000);
-      if (!sched.length) continue;
-      const nearest = sched.reduce((b, t) => (Math.abs(t - first) < Math.abs(b - first) ? t : b));
-      out.set(`${lineId}|${towards}`, {
-        late: (first - nearest) / 60000, station, next: dir.next, horizon: Math.max(...list.map((a) => a.etaAt)),
-      });
-    }
-  }
+// Trains never run backwards. When a newer answer says a train is a little
+// behind where we showed it (it was held at a platform), keep it where it was
+// until the estimate catches up. A big step back is a different train reusing
+// the number, so that one moves.
+const shown = new Map(); // train id -> { prog, t, at }
+function holdBack(trains) {
+  const now = Date.now();
+  const out = trains.map((t) => {
+    if (!t.from) return t;
+    const ids = model.lines.get(t.lineId).stations;
+    const a = ids.indexOf(t.from);
+    const b = ids.indexOf(t.to);
+    const prog = (a + (b - a) * t.f) * Math.sign(b - a); // stations travelled, in the direction of travel
+    const prev = shown.get(t.id);
+    if (prev && prog < prev.prog && prev.prog - prog < 0.75) { prev.at = now; return prev.t; }
+    shown.set(t.id, { prog, t, at: now });
+    return t;
+  });
+  for (const [id, v] of shown) if (now - v.at > 60000) shown.delete(id);
   return out;
 }
 
 // Train markers for the map: one best estimate per train.
-//  - live lines: trains approaching the open station are worked back from their
-//    live arrival times; the rest of the line follows the timetable shifted to
-//    the live timing;
-//  - other lines: the timetable, assuming trains run on time.
+//  - lines with live times: every train listed by any station, placed from its
+//    train number (work back from the next station it is due at);
+//  - stretches of those lines no station answer covers yet (just after
+//    start-up), and every other line: the timetable, assuming trains run on time.
 function mapTrains() {
   const now = Date.now();
   if (state.demo && state.feed) {
@@ -190,37 +182,36 @@ function mapTrains() {
   }
   const trains = [];
   const liveLines = new Set();
-  for (const [lineId, live] of state.live) {
-    if (!live.data || isStale(live)) continue;
-    liveLines.add(lineId);
-    const seen = new Set();
-    for (const a of live.data.arrivals) {
-      if (a.line !== lineId || seen.has(`${a.towards}|${a.train}`)) continue;
-      seen.add(`${a.towards}|${a.train}`);
-      const p = estimatePosition(model, a, now);
-      if (p && !p.atTerminus) trains.push({ ...p, lineId, kind: "live-est", id: `l|${lineId}|${a.towards}|${a.train}` });
+  const windows = [];
+  let loading = "";
+  let failed = "";
+  for (const live of new Set(state.live.values())) {
+    const lines = new Set([...state.live].filter(([, l]) => l === live).map(([id]) => id));
+    if (!live.data || isStale(live)) {
+      if (live.error && live.status !== "loading") failed = `${live.source.name}: ${live.error}`;
+      continue;
     }
-    trains.push(...live.data.positions);
+    for (const id of lines) liveLines.add(id);
+    trains.push(...holdBack(trackTrains(model, live.data, now, lines)), ...live.data.positions);
+    windows.push(...(live.data.windows || []));
+    // Until every swept station has answered, faded timetable trains fill the gaps.
+    if (live.data.sweep && live.data.swept < live.data.sweep) loading = ` · ${live.data.swept}/${live.data.sweep} stations`;
   }
-  const timing = liveTiming(now);
-  trains.push(...scheduledPositions(model, NETWORK.lines.map((l) => l.id), now, {
-    shift: (lineId, towards) => timing.get(`${lineId}|${towards}`)?.late || 0,
-    // Trips that will reach the open station within the live horizon are already shown from live data.
-    skip: (trip, late) => {
-      const t = timing.get(`${trip.lineId}|${trip.stops[trip.stops.length - 1]}`);
-      if (!t) return false;
-      for (let i = 0; i < trip.stops.length - 1; i++) {
-        if (trip.stops[i] !== t.station || trip.stops[i + 1] !== t.next) continue;
-        const eta = trip.dep + (trip.cum[i] + late) * 60000;
-        if (eta > now - 30000 && eta <= t.horizon + 60000) return true;
-      }
-      return false;
-    },
-  }));
+  const sched = scheduledPositions(model, NETWORK.lines.map((l) => l.id), now, {
+    // Where live answers cover a stretch, they already say which trains are in it.
+    skip: (trip, k) => liveLines.has(trip.lineId) && coveredBy(windows, trip, k),
+  });
+  trains.push(...sched);
+  // "Pink" and "Pink branch" read as one line on the map, as do the two Red lines.
+  // "Pink" and "Pink branch" read as one line on the map, as do the two Red lines.
+  const names = (ids) => [...new Set([...ids].map((id) => model.lines.get(id).short.replace(" branch", "").replace(/^(Dark|Light) /, "")))].join(" · ");
+  const schedOnly = [...new Set(sched.map((t) => t.lineId))].filter((id) => !liveLines.has(id));
   const parts = [];
-  if (liveLines.size) parts.push(`<span class="tag live">LIVE</span> positions from live times (unofficial)`);
-  parts.push(`<span class="tag ttag">SCHEDULED</span> timetable, if on time`);
-  return { trains, note: parts.join(" ") };
+  if (liveLines.size) parts.push(`<span class="tag live">LIVE</span> ${esc(names(liveLines))} <span class="sub">unofficial${loading}</span>`);
+  else if (state.unofficial && failed) parts.push(`<span class="tag stale">NO LIVE</span> <span class="sub">${esc(failed)}</span>`);
+  else if (state.unofficial) parts.push(`<span class="tag stale">LIVE</span> <span class="sub">connecting…</span>`);
+  if (schedOnly.length) parts.push(`<span class="tag ttag">SCHEDULED</span> ${esc(names(schedOnly))} <span class="sub">on-time timetable</span>`);
+  return { trains, note: parts.join("<br>") };
 }
 
 function locationMessage() {
@@ -407,12 +398,18 @@ function renderLeg(leg) {
     <div class="fine">${esc(KIND_LABEL[t.kind] || t.kind)}${t.connector ? ` — ${esc(t.connector)}` : ""}</div></li>`;
 }
 
+// When the live answer for this station was produced (sources that answer per
+// station say so; others give one time for everything).
+function liveTimeAt(live, stationId) {
+  return live.data?.stations ? live.data.stations.get(stationId) ?? null : live.data?.sourceTime ?? null;
+}
+
 function renderLive(live, stationId, destinationId, needMin) {
   if (!live.data) {
     return `<div class="src"><span class="tag na">Live arrivals unavailable</span> ${live.status === "loading" ? "Connecting…" : esc(live.error || "")}</div>`;
   }
   const now = Date.now();
-  const stale = isStale(live, now);
+  const stale = now - (liveTimeAt(live, stationId) ?? 0) > LIVE_STALE_MS;
   const trains = nextTrains(live, stationId, destinationId, now);
   if (!trains.length) return `<div class="src muted">No trains reported in this direction.</div>`;
   return `<ul class="etas">${trains.map((t) => {
@@ -435,14 +432,17 @@ function renderScheduled(lineId, stationId, nextId, needMin) {
     <div class="src"><span class="tag ttag">SCHEDULED</span> assumes trains run on time</div>`;
 }
 
-function liveStatusLine(live) {
+function liveStatusLine(live, stationId) {
   if (live.status === "idle") return "";
   if (!live.data) return `<p class="fine">Live source: ${esc(live.source.name)}${live.source.unofficial ? " (unofficial)" : ""} · ${live.status === "loading" ? "connecting…" : `unavailable: ${esc(live.error)}`}</p>`;
-  const stale = isStale(live);
+  const at = liveTimeAt(live, stationId);
+  if (at == null) return `<p class="fine live-line"><span class="tag stale">LIVE</span> asking ${esc(live.source.name)} for this station…${live.error ? ` <span class="warn-text">(${esc(live.error)})</span>` : ""}</p>`;
+  const stale = Date.now() - at > LIVE_STALE_MS;
+  const every = live.source.unofficial ? EVERY_MS.open : live.source.pollMs || 20000;
   return `<p class="fine live-line">${stale ? `<span class="tag stale">STALE</span>` : `<span class="tag live">LIVE</span>`}
-    Source time ${fmtTime(live.data.sourceTime)} · received ${fmtTime(live.data.receivedAt)} · refreshes every ${Math.round((live.source.pollMs || 20000) / 1000)} s
+    Source time ${fmtTime(at)} · received ${fmtTime(live.data.receivedAt)} · refreshes every ${Math.round(every / 1000)} s
     ${live.error ? ` · <span class="warn-text">last refresh failed (${esc(live.error)}), showing previous data</span>` : ""}
-    ${stale ? ` · <span class="warn-text">data is ${Math.round((Date.now() - live.data.sourceTime) / 1000)} s old, countdowns may be wrong</span>` : ""}
+    ${stale ? ` · <span class="warn-text">data is ${Math.round((Date.now() - at) / 1000)} s old, countdowns may be wrong</span>` : ""}
     ${live.source.test ? ` · <b>local test feed</b>` : ""}
     ${live.source.unofficial ? ` · <b>unofficial</b> via <a href="${UNOFFICIAL.site}" target="_blank" rel="noopener">${esc(live.source.name)}</a>, not endorsed by BTS` : ""}</p>`;
 }
@@ -510,7 +510,7 @@ function renderStation() {
       : "";
     return `<section class="line-block" style="--c:${line.color}">
         <h3>${lineChip(lineId, code)}</h3>
-        ${live ? liveStatusLine(live) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")} Times below are from the timetable.</p>`}
+        ${live ? liveStatusLine(live, s.id) : `<p class="fine">${esc(LIVE_REASON[lineId] || "No live arrival data.")} Times below are from the timetable.</p>`}
         <div class="dirs">${dirs}</div>
         ${ttBlock}
       </section>`;
@@ -570,8 +570,8 @@ function openStation(id) {
   map.highlight([id]);
   if (s.lat != null) map.focusOn(state.location ? [s, state.location] : [s]);
   refreshFeed();
-  // Per-station live sources fetch the newly opened station straight away.
-  for (const p of polls) if (p.source.load) p.refresh({ reset: true });
+  // Per-station live sources ask for the newly opened station next.
+  for (const p of polls) if (p.source.load) p.refresh();
   render();
   $("#panel").scrollTop = 0;
 }
@@ -679,7 +679,13 @@ function setupLive() {
   polls = [];
   state.live.clear();
   const sources = [...sourcesFor()];
-  if (state.unofficial) sources.push(createUnofficialSource(model, () => (state.view === "station" ? state.stationId : null)));
+  if (state.unofficial) {
+    sources.push(createUnofficialSource(model, () => ({
+      open: state.view === "station" ? state.stationId : null,
+      near: state.location ? nearestStations(state.location, NETWORK.stations, 2).filter((n) => n.meters < 2500).map((n) => n.station.id) : [],
+      inView: (s) => map.inView(s),
+    })));
+  }
   for (const source of sources) {
     const poll = startPolling(source, model, () => render(), { isOffline });
     poll.source = source;

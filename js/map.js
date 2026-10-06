@@ -466,6 +466,14 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
 
   return {
     setMe, setTrains, highlight, focusOn, selectPlace,
+    // Is this point on screen now (give or take a margin in pixels)?
+    inView: (p, margin = 40) => {
+      if (p?.lat == null) return false;
+      const q = project(p.lat, p.lon);
+      const x = q.x * view.s + view.x;
+      const y = q.y * view.s + view.y;
+      return x > -margin && y > -margin && x < (svg.clientWidth || 360) + margin && y < (svg.clientHeight || 360) + margin;
+    },
     fitAll: () => fit(),
     zoomIn: () => zoomAt(1.5, svg.clientWidth / 2, svg.clientHeight / 2),
     zoomOut: () => zoomAt(1 / 1.5, svg.clientWidth / 2, svg.clientHeight / 2),

@@ -1,10 +1,11 @@
 // Offline app shell. tools/build-site.mjs replaces VERSION with a content
-// hash on deploy; tests check SHELL lists every app file.
-const VERSION = "6e49312587dd";
+// hash on deploy; tests check SHELL lists every app file. The place logo
+// pictures (icons/logos/*.png) are cached as they are first shown instead.
+const VERSION = "e3a3ce950433";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/main.js", "js/model.js", "js/geo.js", "js/map.js", "js/feeds.js", "js/schedule.js", "js/coverage.js", "js/route.js", "js/live.js", "js/scheduled.js", "js/unofficial.js",
-  "data/network.js", "data/places.js", "data/roads.js", "data/runtimes.js", "icons/places/index.js", "icons/icon.svg", "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png",
+  "data/network.js", "data/places.js", "data/place-info.js", "data/roads.js", "data/runtimes.js", "icons/places/index.js", "icons/logos/index.js", "icons/icon.svg", "icons/apple-touch-icon.png", "icons/icon-192.png", "icons/icon-512.png",
 ];
 
 self.addEventListener("install", (e) => {

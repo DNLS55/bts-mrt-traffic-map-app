@@ -133,9 +133,8 @@ export function createMap(container, model, { onStationTap, places = [], onPlace
   const roadLabels = [];
   for (const road of roads) {
     if (!road.lines.length) continue;
-    const d = road.lines.map((l) => pathD(l)).join("");
-    el("path", { d, class: "road-casing" }, roadsG);
-    el("path", { d, class: "road" }, roadsG);
+    // One plain grey line per road (tools/build_roads.py joins the OSM pieces).
+    el("path", { d: road.lines.map((l) => pathD(l)).join(""), class: "road" }, roadsG);
     // Label at the vertex closest to the road's centre of mass.
     const all = road.lines.flat();
     const c = all.reduce((a, q) => [a[0] + q[0] / all.length, a[1] + q[1] / all.length], [0, 0]);

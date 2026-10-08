@@ -12,8 +12,7 @@
   --map-bg: #eef1f5;
   --demo: #c2410c;
   --water: #9cc7e6;
-  --road: #ffffff;
-  --road-edge: #d5dbe4;
+  --road: #c4cad3;
   --water-ink: #2b6a99;
   --park: #cfe8c4;
   --park-edge: #9cc98a;
@@ -25,14 +24,14 @@
     --bg: #0b1020; --card: #141a2e; --ink: #e7ecf5; --muted: #9aa5b8; --line: #263049;
     --accent: #7aa2ff; --good: #4ade80; --bad: #f87171; --warn-bg: #3a2c05; --warn-ink: #fcd77a;
     --map-bg: #10162a; --demo: #fb923c; color-scheme: dark;
-    --water: #1d4466; --water-ink: #8ec3ee; --road: #2a3350; --road-edge: #1b2238; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
+    --water: #1d4466; --water-ink: #8ec3ee; --road: #3c4561; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0b1020; --card: #141a2e; --ink: #e7ecf5; --muted: #9aa5b8; --line: #263049;
   --accent: #7aa2ff; --good: #4ade80; --bad: #f87171; --warn-bg: #3a2c05; --warn-ink: #fcd77a;
   --map-bg: #10162a; --demo: #fb923c; color-scheme: dark;
-    --water: #1d4466; --water-ink: #8ec3ee; --road: #2a3350; --road-edge: #1b2238; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
+    --water: #1d4466; --water-ink: #8ec3ee; --road: #3c4561; --park: #1d3a24; --park-edge: #2f5a37; --park-ink: #9ed38b;
 }
 
 * { box-sizing: border-box; }
@@ -305,12 +304,36 @@ hr.thin { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
 .spot { padding: 6px 2px; }
 
 /* Major roads: quiet, under the rail lines. */
-.net-map .road-casing { fill: none; stroke: var(--road-edge); stroke-width: calc(3.6px / var(--zoom, 1)); stroke-linecap: round; stroke-linejoin: round; }
-.net-map .road { fill: none; stroke: var(--road); stroke-width: calc(2.4px / var(--zoom, 1)); stroke-linecap: round; stroke-linejoin: round; }
-.net-map[data-detail="mid"] .road-casing, .net-map[data-detail="high"] .road-casing { stroke-width: calc(6px / var(--zoom, 1)); }
-.net-map[data-detail="mid"] .road, .net-map[data-detail="high"] .road { stroke-width: calc(4.4px / var(--zoom, 1)); }
+.net-map .road { fill: none; stroke: var(--road); stroke-width: calc(1.6px / var(--zoom, 1)); stroke-linecap: round; stroke-linejoin: round; }
+.net-map[data-detail="mid"] .road, .net-map[data-detail="high"] .road { stroke-width: calc(3px / var(--zoom, 1)); }
 .net-map .road-lbl { font-size: 9.5px; font-weight: 600; fill: var(--muted); letter-spacing: 0.02em; }
 .net-map .place .pl-art { pointer-events: none; }
 
 .pl-badge svg { width: calc(var(--sz) * 0.78); height: calc(var(--sz) * 0.78); display: block; }
 .panel-head h2 small { font-size: 13px; font-weight: 500; }
+
+/* Place pop-up over the map (tap a place). */
+.place-pop {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 6; max-width: 440px; margin: 0 auto;
+  max-height: calc(100% - 20px); overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 18px;
+  padding: 12px 14px 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.place-pop[hidden] { display: none; }
+.place-pop h3 { margin: 0 28px 2px 0; font-size: 18px; line-height: 1.2; }
+.place-pop p { margin: 8px 0 0; font-size: 14px; line-height: 1.4; }
+.pop-x { position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: var(--muted); font-size: 24px; line-height: 1; }
+.pop-head { display: flex; align-items: center; gap: 12px; }
+.pop-art { position: relative; flex: 0 0 auto; width: var(--sz); height: var(--sz); display: grid; place-items: center; border-radius: calc(var(--sz) * 0.2); background: var(--card); border: 2.5px solid var(--pc); overflow: hidden; }
+.pop-art svg { width: 78%; height: 78%; }
+.pop-art > span { font-size: calc(var(--sz) * 0.5); }
+.pop-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--card); }
+.pop-art:has(img) { border: 0; }
+.blurb b { font-weight: 700; }
+.when { color: var(--muted); }
+.pop-near { color: var(--muted); font-size: 13px !important; }
+.pop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.pop-actions .btn-link { font: inherit; font-size: 14px; font-weight: 600; min-height: 42px; padding: 4px 8px; text-align: center; cursor: pointer; }
+.pop-actions .go { grid-column: 1 / -1; background: var(--accent); color: #fff; border-color: transparent; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pop-actions .go { color: #0b1020; } }
+:root[data-theme="dark"] .pop-actions .go { color: #0b1020; }

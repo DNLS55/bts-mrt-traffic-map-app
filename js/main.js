@@ -2,8 +2,10 @@ import { NETWORK } from "../data/network.js";
 import { PLACES } from "../data/places.js";
 import { ROADS } from "../data/roads.js";
 import { PLACE_ICONS } from "../icons/places/index.js";
+import { LOGO_IDS } from "../icons/logos/index.js";
+import { PLACE_INFO } from "../data/place-info.js";
 import { buildModel, directionsAt } from "./model.js";
-import { nearestStations, walkMinutes, distanceM, formatDistance, WALK } from "./geo.js";
+import { nearestStations, walkMinutes, distanceM, formatDistance, WALK, crosses } from "./geo.js";
 import { createMap, PLACE_COLORS } from "./map.js";
 import { STALE_AFTER_MS, createDemoFeed, timetableFor, formatHeadway } from "./feeds.js";
 import { COVERAGE, LIVE_REASON } from "./coverage.js";
@@ -47,7 +49,7 @@ const embedded = (() => { try { return window.top !== window.self; } catch { ret
 const demoFeed = createDemoFeed(model);
 const placeById = new Map(PLACES.places.map((p) => [p.id, p]));
 const map = createMap($("#map"), model, {
-  onStationTap: openStation, places: PLACES.places, onPlaceTap: openPlace, icons: PLACE_ICONS, roads: ROADS.roads,
+  onStationTap: openStation, places: PLACES.places, onPlaceTap: (id) => { openPlace(id); showPlacePop(id); }, icons: PLACE_ICONS, roads: ROADS.roads,
 });
 
 // ---------------- location (device only) ----------------
@@ -266,8 +268,15 @@ function renderHome() {
   return html + COPYRIGHT_HTML;
 }
 
+// Nearest stations to a place, on foot: a station across the Chao Phraya
+// counts as 2.5 km further (bridges are few; Talat Noi is not "near" Khlong San).
+const RIVER_PENALTY_M = 2500;
 function nearestToPlace(pl, n = 3) {
-  return nearestStations(pl, NETWORK.stations, n);
+  const river = NETWORK.landmarks?.river?.lines || [];
+  return nearestStations(pl, NETWORK.stations, 15)
+    .map((x) => ({ ...x, cost: x.meters + (crosses(pl, x.station, river) ? RIVER_PENALTY_M : 0) }))
+    .sort((a, b) => a.cost - b.cost)
+    .slice(0, n);
 }
 
 function placeBadge(pl, size = 40) {
@@ -292,6 +301,68 @@ function renderPlaces() {
     <p class="fine">Places: merged top-100 list. Locations and outlines: © OpenStreetMap contributors (ODbL), via Nominatim.</p>`;
 }
 
+// ---------------- place pop-up (tap a place on the map) ----------------
+const LOGOS = new Set(LOGO_IDS);
+const systemOf = (st) => [...new Set(st.lines.map((l) => l.line.split("-")[0]))].join("/");
+
+// The ChatGPT-made logo card where there is one (#1-100), drawn over the
+// hand-drawn icon, which shows if the picture can't load (e.g. offline).
+function placeArt(pl, size) {
+  const icon = PLACE_ICONS[pl.id] || PLACE_ICONS[pl.icon];
+  return `<span class="pop-art" style="--sz:${size}px;--pc:${PLACE_COLORS[pl.category] || "#4a5568"}">
+    ${icon ? `<svg viewBox="0 0 32 32" aria-hidden="true">${icon}</svg>` : `<span>${pl.emoji}</span>`}
+    ${LOGOS.has(pl.id) ? `<img src="icons/logos/${pl.id}.png" alt="" width="${size}" height="${size}" loading="lazy">` : ""}</span>`;
+}
+
+function placeBlurb(pl) {
+  const i = PLACE_INFO[pl.id];
+  if (!i) return pl.note ? `<p>${esc(pl.note)}</p>` : "";
+  return `<p class="blurb"><b>${esc(i.what)}</b> ${esc(i.why)}</p>${i.when ? `<p class="when"><span aria-hidden="true">🕒</span> ${esc(i.when)}</p>` : ""}`;
+}
+
+// Google Maps: the place itself, and directions from its nearest station
+// (walking when it is close, otherwise Google picks the mode).
+function googleLinks(pl, near) {
+  const place = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pl.name}, Bangkok`)}`;
+  const dir = `https://www.google.com/maps/dir/?api=1&origin=${near.station.lat},${near.station.lon}&destination=${pl.lat},${pl.lon}${near.meters <= 2500 ? "&travelmode=walking" : ""}`;
+  return { place, dir };
+}
+
+function showPlacePop(id) {
+  const pl = placeById.get(String(id));
+  const pop = $("#place-pop");
+  if (!pl) { pop.hidden = true; return; }
+  const near = nearestToPlace(pl, 1)[0];
+  const g = googleLinks(pl, near);
+  pop.innerHTML = `
+    <button class="pop-x" data-pop-close aria-label="Close">×</button>
+    <div class="pop-head">${placeArt(pl, 84)}
+      <div><h3>${esc(pl.name)}</h3><div class="muted">#${esc(pl.id)} · ${esc(pl.category)}</div></div></div>
+    ${placeBlurb(pl)}
+    <p class="pop-near">Nearest station: <b>${esc(near.station.name)}</b> (${esc(systemOf(near.station))}) · ${near.walkMin} min walk</p>
+    <div class="pop-actions">
+      <a class="btn-link" href="${g.place}" target="_blank" rel="noopener">Google Maps</a>
+      <a class="btn-link go" href="${g.dir}" target="_blank" rel="noopener">Go there from ${esc(near.station.name)} ${esc(systemOf(near.station))}</a>
+      <button class="btn-link" data-route-to-place="${esc(pl.id)}">Train route here</button>
+      <button class="btn-link" data-pop-more>More</button>
+    </div>`;
+  pop.querySelector("img")?.addEventListener("error", (e) => e.target.remove());
+  pop.hidden = false;
+  pop.scrollTop = 0;
+}
+
+function hidePlacePop() { $("#place-pop").hidden = true; }
+
+function routeToPlace(id) {
+  const pl = placeById.get(id);
+  state.route.to = nearestToPlace(pl, 1)[0].station.id;
+  state.route.from = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0].station.id : null;
+  state.route.q = "";
+  state.view = "route";
+  showRouteOnMap();
+  render();
+}
+
 function renderPlace() {
   const pl = placeById.get(state.placeRank);
   const near = nearestToPlace(pl, 3);
@@ -299,8 +370,8 @@ function renderPlace() {
   const kind = pl.areas ? "Outlined area on the map" : pl.lines ? "Highlighted street on the map" : "Point on the map";
   return `
     <div class="panel-head"><button class="back" data-go="places">‹ Top 100</button></div>
-    <div class="place-hero">${placeBadge(pl, 64)}<div><h2>${esc(pl.name)}</h2><div class="muted">#${esc(pl.id)}${pl.extra ? " (added)" : ""} · ${esc(pl.category)}</div></div></div>
-    ${pl.note ? `<p>${esc(pl.note)}</p>` : ""}
+    <div class="place-hero">${placeArt(pl, 72)}<div><h2>${esc(pl.name)}</h2><div class="muted">#${esc(pl.id)}${pl.extra ? " (added)" : ""} · ${esc(pl.category)}</div></div></div>
+    ${placeBlurb(pl)}
     <p class="fine">${kind}${pl.approx ? " · position approximate" : ""}.</p>
     <h3 class="section-h">Nearest stations</h3>
     <ul class="list">${near.map((n) => `<li><button class="row" data-station="${esc(n.station.id)}">
@@ -308,7 +379,8 @@ function renderPlace() {
       <span class="walk"><b>${n.walkMin} min</b> walk<br><small>${formatDistance(n.meters)}</small></span></button></li>`).join("")}</ul>
     <div class="actions">
       <button class="primary" data-route-to-place="${esc(pl.id)}">${mine ? `Route from ${esc(mine.station.name)}` : "Plan a route here"}</button>
-      <a class="btn-link" href="https://maps.apple.com/?q=${encodeURIComponent(pl.name)}&ll=${pl.lat},${pl.lon}" target="_blank" rel="noopener">Open in Maps</a>
+      <a class="btn-link" href="${googleLinks(pl, near[0]).place}" target="_blank" rel="noopener">Google Maps</a>
+      <a class="btn-link wide" href="${googleLinks(pl, near[0]).dir}" target="_blank" rel="noopener">Go there from ${esc(near[0].station.name)} ${esc(systemOf(near[0].station))} (Google Maps)</a>
     </div>`;
 }
 
@@ -320,7 +392,9 @@ function openPlace(id) {
   map.selectPlace(pl.id);
   const near = nearestToPlace(pl, 1)[0];
   map.highlight([near.station.id]);
-  map.focusOn([pl, near.station], 1200);
+  // Fit the whole outline (e.g. all of Bang Krachao), the marker and the station.
+  const outline = (pl.areas || []).flat().map(([lat, lon]) => ({ lat, lon }));
+  map.focusOn([pl, near.station, ...outline], 1200);
   render();
   $("#panel").scrollTop = 0;
 }
@@ -547,7 +621,7 @@ function render() {
   renderChrome();
   const panel = $("#panel");
   const focused = document.activeElement?.id;
-  if (state.view !== "place") map.selectPlace(null);
+  if (state.view !== "place") { map.selectPlace(null); hidePlacePop(); }
   if (state.view === "places") panel.innerHTML = renderPlaces();
   else if (state.view === "place" && state.placeRank) panel.innerHTML = renderPlace();
   else if (state.view === "route") panel.innerHTML = renderRoute();
@@ -618,15 +692,13 @@ $("#panel").addEventListener("click", (e) => {
   const pr = e.target.closest("[data-place]");
   if (pr) { openPlace(pr.dataset.place); return; }
   const rp = e.target.closest("[data-route-to-place]");
-  if (rp) {
-    const pl = placeById.get(rp.dataset.routeToPlace);
-    state.route.to = nearestToPlace(pl, 1)[0].station.id;
-    state.route.from = state.location ? nearestStations(state.location, NETWORK.stations, 1)[0].station.id : null;
-    state.route.q = "";
-    state.view = "route";
-    showRouteOnMap();
-    render();
-  }
+  if (rp) routeToPlace(rp.dataset.routeToPlace);
+});
+$("#place-pop").addEventListener("click", (e) => {
+  if (e.target.closest("[data-pop-close]")) return hidePlacePop();
+  if (e.target.closest("[data-pop-more]")) { hidePlacePop(); $("#panel").scrollIntoView?.({ behavior: "smooth" }); return; }
+  const rp = e.target.closest("[data-route-to-place]");
+  if (rp) { hidePlacePop(); routeToPlace(rp.dataset.routeToPlace); }
 });
 $("#panel").addEventListener("input", (e) => {
   if (e.target.id === "pick-q") { state.pickQuery = e.target.value; render(); }

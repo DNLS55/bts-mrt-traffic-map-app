@@ -1,7 +1,7 @@
 // Offline app shell. tools/build-site.mjs replaces VERSION with a content
 // hash on deploy; tests check SHELL lists every app file. The place logo
 // pictures (icons/logos/*.png) are cached as they are first shown instead.
-const VERSION = "e3a3ce950433";
+const VERSION = "36a4ee150ac8";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/main.js", "js/model.js", "js/geo.js", "js/map.js", "js/feeds.js", "js/schedule.js", "js/coverage.js", "js/route.js", "js/live.js", "js/scheduled.js", "js/unofficial.js",

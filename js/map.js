@@ -27,7 +27,7 @@ const pathD = (pts) => pts.map(([lat, lon], i) => {
 export const PLACE_COLORS = {
   temple: "#d39b0b", market: "#e67e22", nightlife: "#8e44ad", food: "#e4572e", park: "#2e9d4f",
   mall: "#e2336f", culture: "#138a8a", neighbourhood: "#2f6fd6", river: "#1b8fd0", view: "#5b4bd6",
-  landmark: "#4a5568", wellness: "#c06c84", hospital: "#b91c1c",
+  landmark: "#4a5568", wellness: "#c06c84", hospital: "#b91c1c", hotel: "#9a6b3f",
 };
 
 export function createMap(container, model, { onStationTap, places = [], onPlaceTap = () => {}, icons = {}, roads = [] }) {

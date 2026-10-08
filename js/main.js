@@ -305,7 +305,7 @@ function renderPlaces() {
 const LOGOS = new Set(LOGO_IDS);
 const systemOf = (st) => [...new Set(st.lines.map((l) => l.line.split("-")[0]))].join("/");
 
-// The ChatGPT-made logo card where there is one (#1-100), drawn over the
+// The logo card where there is one (app/icons/logos), drawn over the
 // hand-drawn icon, which shows if the picture can't load (e.g. offline).
 function placeArt(pl, size) {
   const icon = PLACE_ICONS[pl.id] || PLACE_ICONS[pl.icon];
